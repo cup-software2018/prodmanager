@@ -2,7 +2,8 @@
 
 What prod manages under Products: `.prod/`, `vlist/<name>.yml|.withdrawn`, `vlist/drafts/` (server),
 `modulefiles/`, and per product `<VER>/`, `<VER>.manifest`, `<VER>.buildinfo` for versions that have a
-manifest. Everything else is "unmanaged" and is never deleted by prod.
+manifest. Everything else is "unmanaged" and is never deleted by prod. A product-named directory with
+no version-like entry (V...) in it is listed as one entry, "<DIR>/", instead of entry by entry.
 """
 
 import os
@@ -53,6 +54,7 @@ def unmanaged(paths):
         if not (os.path.isdir(full) and not os.path.islink(full) and vlist_mod.PRODUCT_RE.match(top)):
             found.append(top)
             continue
+        rest, versionish = [], False
         for n in sorted(os.listdir(full)):
             if n.startswith(".") and (n.endswith(".partial") or n.endswith(".old")):
                 leftovers.append(f"{top}/{n}")
@@ -61,8 +63,14 @@ def unmanaged(paths):
             for suffix in (manifest.SUFFIX, ".buildinfo"):
                 if n.endswith(suffix):
                     base = n[: -len(suffix)]
+            versionish = versionish or bool(vlist_mod.VERSION_RE.match(base))
             if (top, base) not in frozen:
-                found.append(f"{top}/{n}")
+                rest.append(f"{top}/{n}")
+        if rest and not versionish:
+            # No version directories at all (e.g. a git checkout of pyenv): one line for the whole directory.
+            found.append(f"{top}/")
+        else:
+            found += rest
     return found, leftovers
 
 

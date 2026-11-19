@@ -170,7 +170,7 @@ def _print_list(lst, out):
     if lst.unmanaged:
         print("not managed by prod:", file=out)
         for u in lst.unmanaged:
-            print(f"  {u}", file=out)
+            print(f"  {u}" + ("  (whole directory, no versions in it)" if u.endswith("/") else ""), file=out)
     if lst.leftovers:
         print("leftovers of interrupted syncs (prod gc):", file=out)
         for u in lst.leftovers:

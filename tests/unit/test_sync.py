@@ -201,14 +201,23 @@ class TestInventory(FakeClient):
         with open(self.cfile("CERNLIB.tgz"), "w") as f:
             f.write("x")
         os.makedirs(self.cfile("ROOT", ".V9.partial"))
+        # a directory without versions (a pyenv checkout) is one entry; one with versions is listed per entry
+        for rel in (("PYENV", ".git"), ("PYENV", "bin"), ("PYENV", "versions")):
+            os.makedirs(self.cfile(*rel))
+        with open(self.cfile("PYENV", "README.md"), "w") as f:
+            f.write("x")
+        os.makedirs(self.cfile("GEANT4", "V11.1.3"))
+        with open(self.cfile("GEANT4", "setup_GEANT4.sh"), "w") as f:
+            f.write("x")
+        os.makedirs(self.cfile("NEWPROD", ".V1.0.partial"))  # an interrupted first sync: only a leftover
         lst = inventory.listing(self.cpaths, self.ccfg, tool=TOOL, remote=True)
         self.assertEqual([v["name"] for v in lst.vlists], ["3.0"])
         self.assertTrue(lst.vlists[0]["trusted"])
         self.assertIsNotNone(lst.vlists[0]["first_sync"])
         self.assertEqual({(x["name"], tuple(x["used_by"])) for x in lst.versions},
                          {("PYTHON", ("3.0",)), ("ROOT", ("3.0",))})
-        self.assertEqual(lst.unmanaged, ["CERNLIB.tgz"])
-        self.assertEqual(lst.leftovers, ["ROOT/.V9.partial"])
+        self.assertEqual(lst.unmanaged, ["CERNLIB.tgz", "GEANT4/V11.1.3", "GEANT4/setup_GEANT4.sh", "PYENV/"])
+        self.assertEqual(lst.leftovers, ["NEWPROD/.V1.0.partial", "ROOT/.V9.partial"])
         self.assertEqual([v["name"] for v in lst.remote], ["3.0", "3.1"])
 
     def test_server_verify_includes_versions_in_no_vlist(self):

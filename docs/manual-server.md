@@ -63,7 +63,8 @@ products 서버를 운영하는 사람을 위한 문서입니다. 서버는 지�
 ```
 
 `prod`가 관리하지 않는 파일(`CERNLIB.tgz`, 미등록 버전 등)은 `prod list`의 "not managed by prod"에 나옵니다. `prod`는
-이것들을 지우지 않습니다.
+이것들을 지우지 않습니다. 안에 버전 디렉터리(`V…`)가 하나도 없는 디렉터리(예: pyenv checkout인 `PYENV/`)는 항목별로
+나열하지 않고 `PYENV/  (whole directory, no versions in it)` 한 줄로 나옵니다.
 
 ## 3. 도구 설치, 업그레이드, 되돌리기
 
