@@ -1,0 +1,15 @@
+# NOTICE DAQ ("for notice daq" in the legacy postinstall.sh; yaml-cpp and zeromq were only on the server).
+format: "1"
+group: "daq"
+description: "CUPDAQ and CUPDATAMODEL dependencies"
+products: ["CUPDAQ", "CUPDATAMODEL"]
+repos: ["epel"]
+packages:
+  - "libusb-devel"
+  - "libusbx-devel"
+  - "yaml-cpp"
+  - "yaml-cpp-devel"
+  - "zeromq"
+  - "zeromq-devel"
+  - "cppzmq-devel"
+optional: []

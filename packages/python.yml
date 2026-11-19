@@ -1,0 +1,24 @@
+# Building and running Python ("for PYENV" in the legacy postinstall.sh, plus xcb-util-cursor and gdbm-devel
+# that the server's copy tried to add; a trailing backslash made that line fail there).
+format: "1"
+group: "python"
+description: "Python build and runtime dependencies"
+products: ["PYTHON"]
+repos: []
+packages:
+  - "zlib-devel"
+  - "bzip2"
+  - "bzip2-devel"
+  - "readline-devel"
+  - "sqlite"
+  - "sqlite-devel"
+  - "openssl-devel"
+  - "xz"
+  - "xz-devel"
+  - "libffi-devel"
+  - "findutils"
+  - "tk-devel"
+  - "libnsl2-devel"
+  - "xcb-util-cursor"
+  - "gdbm-devel"
+optional: []

@@ -1,0 +1,10 @@
+#!/usr/bin/python3 -I
+"""Print what ROOT's bin/thisroot.sh sets, as modulefile lines. Run once by `prod release`."""
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "_common"))
+import sh2mod  # noqa: E402
+
+prefix = sys.argv[1]
+print(sh2mod.capture(prefix, os.path.join(prefix, "bin", "thisroot.sh"), drop={"ROOTSYS"}))

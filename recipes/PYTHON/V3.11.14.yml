@@ -1,0 +1,4 @@
+format: "1"
+product: "PYTHON"
+version: "V3.11.14"
+notes: "Existing binary built before prodmanager; registered as is, without rebuilding. What could be extracted is in its buildinfo."

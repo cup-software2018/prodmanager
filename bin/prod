@@ -1,0 +1,13 @@
+#!/usr/bin/python3 -I
+# Entry point of the prodmanager management tool.
+# -I: ignore PYTHON* environment variables (e.g. PYTHONPATH) and the user site-packages, so that the
+#     PYTHONPATH set by the PYTHON or ROOT modulefiles never leaks into this tool.
+import os
+import sys
+
+_TOOL_ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+sys.path.insert(0, os.path.join(_TOOL_ROOT, "lib"))
+
+from prod.cli import main  # noqa: E402
+
+sys.exit(main(tool_root=_TOOL_ROOT))

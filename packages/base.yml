@@ -1,0 +1,15 @@
+# Packages every node needs: the prod tool itself and the build toolchain.
+format: "1"
+group: "base"
+description: "prod tool requirements and the development toolchain"
+products: []
+repos: ["crb", "epel"]
+packages:
+  - "@Development Tools"
+  - "environment-modules"
+  - "rsync"
+  - "openssh-clients"
+  - "python3"
+  - "python3-pyyaml"
+  - "git"
+optional: []

@@ -1,0 +1,10 @@
+# CAEN HV wrapper and pycaenhv ("pycaenhv" in the server's legacy postinstall.sh).
+format: "1"
+group: "caen"
+description: "CAENHVWRAPPER and pycaenhv dependencies"
+products: ["CAENHVWRAPPER"]
+repos: []
+packages:
+  - "compat-openssl11"
+  - "xcb-util-cursor"
+optional: []

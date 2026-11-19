@@ -1,0 +1,27 @@
+# Geant4 ("for GEANT4" in the legacy postinstall.sh). The legacy 'mesa-*' wildcard is written out as the
+# mesa packages actually installed on cupdev1 (2026-11-19).
+format: "1"
+group: "geant4"
+description: "Geant4 runtime dependencies (XML, Qt5, OpenGL)"
+products: ["GEANT4"]
+repos: []
+packages:
+  - "expat"
+  - "expat-devel"
+  - "qt5-qtbase"
+  - "qt5-qtbase-devel"
+  - "mesa-dri-drivers"
+  - "mesa-libEGL"
+  - "mesa-libEGL-devel"
+  - "mesa-libGL"
+  - "mesa-libGL-devel"
+  - "mesa-libGLU"
+  - "mesa-libGLU-devel"
+  - "mesa-libGLw"
+  - "mesa-libGLw-devel"
+  - "mesa-libgbm"
+  - "mesa-libgbm-devel"
+  - "mesa-vulkan-drivers"
+  - "mesa-compat-libxatracker"
+optional:
+  - "mesa-demos"

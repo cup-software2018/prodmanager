@@ -1,0 +1,41 @@
+# ROOT: running it and building code against it ("for ROOT" in the legacy postinstall.sh).
+format: "1"
+group: "root"
+description: "ROOT runtime and development dependencies"
+products: ["ROOT"]
+repos: ["crb", "epel"]
+packages:
+  - "make"
+  - "cmake"
+  - "gcc"
+  - "gcc-c++"
+  - "gcc-gfortran"
+  - "binutils"
+  - "libX11-devel"
+  - "libXpm-devel"
+  - "libXft-devel"
+  - "libXext-devel"
+  - "openssl-devel"
+  - "pcre-devel"
+  - "mesa-libGL-devel"
+  - "mesa-libGLU-devel"
+  - "glew-devel"
+  - "ftgl-devel"
+  - "mysql-devel"
+  - "fftw-devel"
+  - "cfitsio-devel"
+  - "graphviz-devel"
+  - "libuuid"
+  - "libuuid-devel"
+  - "avahi-compat-libdns_sd-devel"
+  - "openldap-devel"
+  - "python3-numpy"
+  - "libxml2-devel"
+  - "gsl-devel"
+  - "readline-devel"
+optional:
+  # R bindings. R-Rcpp-devel and R-RInside-devel are not in the AlmaLinux 9 / EPEL repositories
+  # (checked 2026-11-19); in the legacy postinstall.sh they made the whole line fail.
+  - "R-devel"
+  - "R-Rcpp-devel"
+  - "R-RInside-devel"

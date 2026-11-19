@@ -1,0 +1,20 @@
+#!/usr/bin/python3 -I
+"""Print what Geant4's geant4make.sh sets, as modulefile lines. Run once by `prod release`.
+
+Like the legacy setup_GEANT4.sh: share/Geant4-<version>/geant4make/geant4make.sh if it exists,
+otherwise share/Geant4/geant4make/geant4make.sh.
+"""
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "_common"))
+import sh2mod  # noqa: E402
+
+prefix = sys.argv[1]
+version = os.path.basename(prefix.rstrip("/"))[1:]  # V11.1.3 -> 11.1.3
+candidates = [os.path.join(prefix, "share", f"Geant4-{version}", "geant4make", "geant4make.sh"),
+              os.path.join(prefix, "share", "Geant4", "geant4make", "geant4make.sh")]
+script = next((c for c in candidates if os.path.exists(c)), None)
+if script is None:
+    sys.exit(f"no geant4make.sh under {prefix}/share")
+print(sh2mod.capture(prefix, script))

@@ -1,0 +1,9 @@
+format: "1"
+product: "CUPDAQ"
+version: "V4.3"
+# depends: rpath and NEEDED entries name ROOT, CUPDATAMODEL and HDF5 (readelf, 2026-11-19)
+depends:
+  - {name: "ROOT", version: "V6.32.20_3.11.14"}
+  - {name: "HDF5", version: "V1.14.2"}
+  - {name: "CUPDATAMODEL", version: "V1.1"}
+notes: "Existing binary built before prodmanager; registered as is, without rebuilding. What could be extracted is in its buildinfo."

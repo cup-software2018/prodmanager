@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.lh/
+# Design documents are kept outside the repository.
+DESIGN.md
+DESIGN_NOTES.md
