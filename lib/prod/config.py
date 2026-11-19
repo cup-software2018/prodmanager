@@ -1,7 +1,10 @@
 """Paths and configuration.
 
-The Products directory is not configured: it is derived from where the tool is installed,
-`<Products>/.prod/versions/<version>/`. The configuration file is `<Products>/.prod/etc/prod.conf`.
+The Products directory is not configured: it is where the tool is installed,
+`<Products>/.prod/versions/<version>/`. install.sh records it, as given and with symlinks not
+resolved, in `<version>/PRODUCTS`: /home/cupsoft/Products is often a symlink to a local disk, and
+the path written into modulefiles must be /home/cupsoft/Products on every node, not the disk behind
+it. The configuration file is `<Products>/.prod/etc/prod.conf`.
 """
 
 import os
@@ -65,13 +68,29 @@ class Paths:
 
 
 def products_dir_of(tool_root):
-    """Derive the Products directory from an installed tool root `<Products>/.prod/versions/<v>`."""
-    tool_root = os.path.realpath(tool_root)
-    versions = os.path.dirname(tool_root)
+    """The Products directory of an installed tool root `<Products>/.prod/versions/<v>` (or `current`).
+
+    Returns the path recorded by install.sh, which keeps the symlinks the administrator gave
+    (`/home/cupsoft/Products`, not `/scratch/cupsoft/Products`). The recorded path must lead to
+    this tool root.
+    """
+    real = os.path.realpath(tool_root)
+    versions = os.path.dirname(real)
     prod = os.path.dirname(versions)
     if os.path.basename(versions) != "versions" or os.path.basename(prod) != ".prod":
-        raise EnvError(f"prod is not installed (running from {tool_root}); run install.sh first")
-    return os.path.dirname(prod)
+        raise EnvError(f"prod is not installed (running from {real}); run install.sh first")
+    record = os.path.join(real, "PRODUCTS")
+    try:
+        with open(record, encoding="utf-8") as f:
+            products = f.read().strip()
+    except FileNotFoundError:
+        raise EnvError(f"{record} is missing (installed by an older install.sh); run install.sh again")
+    if not _PATH_RE.match(products) or products == "/":
+        raise EnvError(f"{record}: invalid path {products!r}; run install.sh again")
+    if os.path.realpath(os.path.join(products, ".prod", "versions", os.path.basename(real))) != real:
+        raise EnvError(f"{record} says {products}, but this tool is installed under {os.path.dirname(prod)}; "
+                       "run install.sh again")
+    return products
 
 
 @dataclass

@@ -146,6 +146,10 @@ class Sandbox:
     def make_server(self):
         p, home = self.node("server")
         os.makedirs(home)
+        # As on cupdev0 and cupdev1: Products is a symlink to a local disk (with a trailing //).
+        disk = os.path.join(self.root, "server-disk", "Products")
+        os.makedirs(disk)
+        os.symlink(disk + "//", p)
         files = {
             "PYTHON/V3.11.14/bin/python3": ("#!/bin/sh\necho fake python 3.11.14\n", 0o755),
             "PYTHON/V3.11.14/lib/python3.11/os.py": ("# fake\n", 0o644),
@@ -256,6 +260,15 @@ class Sandbox:
               - {name: "GEANT4", version: "V11.1.3"}
             """)
         self.prod("server", "release", "3.1", contains=["frozen, verified", "GEANT4"])
+        # Products is a symlink: modulefiles must carry the symlink path, never the disk behind it
+        disk = os.path.realpath(sp)
+        for rel in ("modulefiles/ROOT/V6.32.20_3.11.14", "modulefiles/vlist/3.1"):
+            with open(os.path.join(sp, rel)) as f:
+                text = f.read()
+            if disk in text or (rel.startswith("modulefiles/ROOT") and sp not in text):
+                raise Failed(f"{rel} does not use the Products symlink path {sp}:\n{text}")
+        self.prod("server", "doctor", "--quick", expect=None,  # packages depend on this node
+                  contains=["ok    tool"], absent=["does not point", disk])
         self.prod("server", "verify", contains=["3.0", "3.1"], absent=["error"])
         self.prod("server", "list", contains=["CERNLIB.tgz", "vlist/3.0.vlist", "ROOT/setup_ROOT.sh"])
 

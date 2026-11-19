@@ -92,11 +92,35 @@ class TestPaths(unittest.TestCase):
             tool = os.path.join(products, ".prod", "versions", "v0.1")
             os.makedirs(tool)
             os.symlink("versions/v0.1", os.path.join(products, ".prod", "current"))
-            self.assertEqual(config.products_dir_of(tool), os.path.realpath(products))
-            self.assertEqual(config.products_dir_of(os.path.join(products, ".prod", "current")),
-                             os.path.realpath(products))
+            with self.assertRaisesRegex(EnvError, "PRODUCTS is missing"):
+                config.products_dir_of(tool)
+            with open(os.path.join(tool, "PRODUCTS"), "w") as f:
+                f.write(products + "\n")
+            self.assertEqual(config.products_dir_of(tool), products)
+            self.assertEqual(config.products_dir_of(os.path.join(products, ".prod", "current")), products)
             with self.assertRaises(EnvError):
                 config.products_dir_of(d)
+            # a record that does not lead back to this tool root
+            with open(os.path.join(tool, "PRODUCTS"), "w") as f:
+                f.write(os.path.join(d, "Other") + "\n")
+            with self.assertRaisesRegex(EnvError, "this tool is installed under"):
+                config.products_dir_of(tool)
+
+    def test_products_dir_of_keeps_symlinks(self):
+        """/home/cupsoft/Products -> /scratch/cupsoft/Products: prod must use the symlink path."""
+        with tempfile.TemporaryDirectory() as d:
+            disk = os.path.join(d, "scratch", "Products")
+            tool = os.path.join(disk, ".prod", "versions", "v0.1")
+            os.makedirs(tool)
+            os.symlink("versions/v0.1", os.path.join(disk, ".prod", "current"))
+            os.makedirs(os.path.join(d, "home"))
+            link = os.path.join(d, "home", "Products")
+            os.symlink(disk + "//", link)
+            with open(os.path.join(tool, "PRODUCTS"), "w") as f:
+                f.write(link + "\n")
+            # whatever path the tool is reached by, the recorded (unresolved) path comes back
+            for root in (tool, os.path.join(link, ".prod", "current"), os.path.join(link, ".prod", "versions", "v0.1")):
+                self.assertEqual(config.products_dir_of(root), link)
 
 
 if __name__ == "__main__":

@@ -332,6 +332,7 @@ mv -T /home/cupsoft/Products/.prod/current.tmp /home/cupsoft/Products/.prod/curr
 | `another prod is running on this node; try again later` | 다른 `prod`가 끝난 뒤 다시 |
 | `the products server is inconsistent for vlist …` | 서버 쪽 문제. 서버 관리자에게 |
 | `no configuration file …/prod.conf; run install.sh` | 도구가 설치되지 않았습니다 (4.3) |
+| `…/PRODUCTS is missing (installed by an older install.sh); run install.sh again` | 도구 설치본에 Products 경로 기록이 없습니다. 지금 tag에서 `./install.sh --force`로 다시 설치 |
 | `'release' runs only where role is 'server' (this node: 'client')` | release는 서버에서 |
 | `prod: environment-modules is not installed …` | `dnf install environment-modules` (root) |
 | `prod: local vlists (~/.prod-local) are not supported yet` | 로컬 vlist는 아직 구현 전입니다 |

@@ -142,6 +142,8 @@ for f in setup_prod.sh setup_prod.csh; do
 done
 find "$TMP" -name __pycache__ -prune -exec rm -rf {} +
 echo "$VERSION_NAME" > "$TMP/VERSION"
+# The Products path as given, symlinks not resolved: prod writes it into modulefiles.
+echo "$PRODUCTS" > "$TMP/PRODUCTS"
 chmod -R a-w,go+rX "$TMP"
 
 if [ -e "$TARGET" ]; then

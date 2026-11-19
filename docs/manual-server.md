@@ -392,3 +392,4 @@ client들은 이 상태의 버전을 받으려 하면 "the server's files differ
 | `another prod is running on this node; try again later` | 다른 `prod`가 끝난 뒤 다시 실행 |
 | `… format 2 is newer than this tool supports (1); update the tool` | 도구를 업그레이드하세요 |
 | `'sync' runs only where role is 'client' (this node: 'server')` | 서버에서는 sync하지 않습니다 |
+| `…/PRODUCTS is missing (installed by an older install.sh); run install.sh again` | 도구 설치본에 Products 경로 기록이 없습니다. 지금 tag에서 `./install.sh --force`로 다시 설치 |
