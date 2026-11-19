@@ -49,8 +49,8 @@ class TestState(unittest.TestCase):
 
     def test_history(self):
         self.assertEqual(state.read_history(self.paths), [])
-        self.assertTrue(state.record(self.paths, "v0.1.0", "sync", vlist="3.1", result="ok"))
-        state.record(self.paths, "v0.1.0", "verify", vlist="3.1", result="error", detail="한글도 됨")
+        self.assertTrue(state.record(self.paths, "v0.1", "sync", vlist="3.1", result="ok"))
+        state.record(self.paths, "v0.1", "verify", vlist="3.1", result="error", detail="한글도 됨")
         with open(self.paths.history, "a") as f:
             f.write("not json\n")
         events = state.read_history(self.paths)
@@ -66,7 +66,7 @@ class TestState(unittest.TestCase):
         try:
             if os.access(self.paths.state, os.W_OK):
                 self.skipTest("running as root")
-            self.assertFalse(state.record(self.paths, "v0.1.0", "verify"))
+            self.assertFalse(state.record(self.paths, "v0.1", "verify"))
         finally:
             os.chmod(self.paths.state, 0o755)
 

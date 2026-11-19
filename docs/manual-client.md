@@ -152,8 +152,8 @@ ssh -o BatchMode=yes cupsoft@192.168.0.150 true && echo ok
 ### 4.3 도구 설치
 
 ```bash
-git clone https://github.com/<owner>/prodmanager.git ~/Devs/prodmanager   # 위치는 아무 곳이나
-cd ~/Devs/prodmanager && git checkout vX.Y.Z
+git clone https://github.com/cup-software2018/prodmanager.git ~/Devs/prodmanager   # 위치는 아무 곳이나
+cd ~/Devs/prodmanager && git checkout vX.Y
 ./install.sh --role client --server cupsoft@192.168.0.150:/home/cupsoft/Products
 ```
 
@@ -274,7 +274,7 @@ prod gc --yes                    # 실제로 지움
 ## 8. 도구 업그레이드와 되돌리기
 
 ```bash
-cd ~/Devs/prodmanager && git fetch --tags && git checkout vX.Y.Z
+cd ~/Devs/prodmanager && git fetch --tags && git checkout vX.Y
 ./install.sh                     # prod.conf와 기록은 그대로 남음
 prod --version
 ```
@@ -283,7 +283,7 @@ prod --version
 
 ```bash
 ls /home/cupsoft/Products/.prod/versions/          # 남아 있는 버전 (최근 3개)
-ln -sfn versions/v0.1.0 /home/cupsoft/Products/.prod/current.tmp
+ln -sfn versions/v0.1 /home/cupsoft/Products/.prod/current.tmp
 mv -T /home/cupsoft/Products/.prod/current.tmp /home/cupsoft/Products/.prod/current
 ```
 

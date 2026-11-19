@@ -11,7 +11,7 @@ from prod import vlist as vlist_mod
 from prod.errors import CheckFailed, EnvError, UsageError
 from prod.hashing import sha256_file
 
-TOOL = "v0.1.0-test"
+TOOL = "v0.1-test"
 
 
 def template(name, home):

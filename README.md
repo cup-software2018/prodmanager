@@ -43,7 +43,7 @@
 **노드 관리자 (cupsoft)**
 
 ```bash
-git clone https://github.com/<owner>/prodmanager.git && cd prodmanager && git checkout vX.Y.Z
+git clone https://github.com/cup-software2018/prodmanager.git && cd prodmanager && git checkout vX.Y
 ./install.sh --role client --server cupsoft@192.168.0.150:/home/cupsoft/Products
 prod sync 3.1 daq_2.1
 prod verify
@@ -81,5 +81,5 @@ prod verify
 
 ## 개발
 
-- 커밋, tag, push는 사람이 합니다. 노드에는 tag(`vX.Y.Z`)만 설치하는 것이 원칙입니다.
+- 커밋, tag, push는 사람이 합니다. 노드에는 tag(`vX.Y`)만 설치하는 것이 원칙입니다.
 - 코드, 주석, `prod`의 메시지는 영어로, 설계 문서와 매뉴얼은 한국어로 씁니다.

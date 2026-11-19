@@ -43,8 +43,8 @@ products 서버를 운영하는 사람을 위한 문서입니다. 서버는 지�
 ```
 /home/cupsoft/Products/
 ├── .prod/
-│   ├── current -> versions/v0.1.0      지금 쓰는 도구
-│   ├── versions/v0.1.0/                도구 (읽기 전용)
+│   ├── current -> versions/v0.1      지금 쓰는 도구
+│   ├── versions/v0.1/                도구 (읽기 전용)
 │   ├── etc/prod.conf                   설정 (role: server)
 │   └── state/                          history.jsonl, packages.yml(시스템 패키지 적용 기록), lock
 ├── vlist/
@@ -70,15 +70,15 @@ products 서버를 운영하는 사람을 위한 문서입니다. 서버는 지�
 ### 3.1 처음 설치
 
 ```bash
-git clone https://github.com/<owner>/prodmanager.git ~/Devs/prodmanager   # 위치는 아무 곳이나
+git clone https://github.com/cup-software2018/prodmanager.git ~/Devs/prodmanager   # 위치는 아무 곳이나
 cd ~/Devs/prodmanager
-git checkout v0.1.0                                   # 노드에는 tag만 설치하는 것이 원칙
+git checkout v0.1                                   # 노드에는 tag만 설치하는 것이 원칙
 ./install.sh --role server
 ```
 
 install.sh가 하는 일:
 
-- `/home/cupsoft/Products/.prod/versions/v0.1.0/`에 도구를 복사하고 `current`를 바꿉니다.
+- `/home/cupsoft/Products/.prod/versions/v0.1/`에 도구를 복사하고 `current`를 바꿉니다.
 - `.prod/etc/prod.conf`가 없을 때만 만듭니다(`role: server`).
 - `~/.local/bin/prod`를 symlink로 만듭니다.
 - **서버에서는 기존 `~/setup_prod.sh`를 건드리지 않고, `~/setup_prod.csh`도 만들지 않습니다**(업그레이드할 때도
@@ -92,9 +92,9 @@ install.sh가 멈추고 설치할 것을 알려 줍니다. [4장](#4-시스템-�
 ### 3.2 업그레이드
 
 ```bash
-cd ~/Devs/prodmanager && git fetch --tags && git checkout v0.2.0
+cd ~/Devs/prodmanager && git fetch --tags && git checkout v0.2
 ./install.sh
-prod --version                                        # prod v0.2.0
+prod --version                                        # prod v0.2
 ```
 
 `prod.conf`와 `state/`는 그대로 남습니다. 도구 버전은 최근 3개만 남깁니다(`--keep N`으로 바꿈).
@@ -105,7 +105,7 @@ prod --version                                        # prod v0.2.0
 ### 3.3 되돌리기
 
 ```bash
-ln -sfn versions/v0.1.0 /home/cupsoft/Products/.prod/current.tmp
+ln -sfn versions/v0.1 /home/cupsoft/Products/.prod/current.tmp
 mv -T /home/cupsoft/Products/.prod/current.tmp /home/cupsoft/Products/.prod/current
 prod --version
 ```

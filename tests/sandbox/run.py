@@ -133,8 +133,8 @@ class Sandbox:
         git = ["git", "-C", self.repo] + GIT_ID
         subprocess.run(git + ["init", "-q"], check=True)
         subprocess.run(git + ["add", "-A"], check=True)
-        subprocess.run(git + ["commit", "-q", "-m", "sandbox v0.1.0"], check=True)
-        subprocess.run(git + ["tag", "v0.1.0"], check=True)
+        subprocess.run(git + ["commit", "-q", "-m", "sandbox v0.1"], check=True)
+        subprocess.run(git + ["tag", "v0.1"], check=True)
 
     def tag(self, name, change=None):
         if change:
@@ -228,7 +228,7 @@ class Sandbox:
     def scenario(self):
         sp, shome = self.node("server")
 
-        self.step("prepare: repository copy tagged v0.1.0, fake server with legacy products")
+        self.step("prepare: repository copy tagged v0.1, fake server with legacy products")
         self.make_repo()
         self.make_server()
 
@@ -236,7 +236,7 @@ class Sandbox:
         with open(os.path.join(shome, "setup_prod.sh"), "rb") as f:
             legacy_setup = f.read()
         self.install("server", "--role", "server")  # keeping the legacy setup is the default on a server
-        self.prod("server", "--version", contains=["prod v0.1.0"])
+        self.prod("server", "--version", contains=["prod v0.1"])
         with open(os.path.join(shome, "setup_prod.sh"), "rb") as f:
             if os.path.islink(os.path.join(shome, "setup_prod.sh")) or f.read() != legacy_setup:
                 raise Failed("install.sh changed the legacy ~/setup_prod.sh on the server")
@@ -364,11 +364,11 @@ class Sandbox:
         self.prod("clientA", "sync", "9.0", expect=5, contains=["update the tool"])
         os.unlink(self.server_file("vlist/9.0.yml"))
 
-        self.step("tool upgrade v0.2.0 (module revision for ROOT), then roll the client back to v0.1.0")
+        self.step("tool upgrade v0.2 (module revision for ROOT), then roll the client back to v0.1")
         tpl = os.path.join(self.repo, "modulefiles", "ROOT", "template.tcl")
-        self.tag("v0.2.0", lambda: open(tpl, "a").write("setenv ROOT_SANDBOX_FIX 1\n"))
+        self.tag("v0.2", lambda: open(tpl, "a").write("setenv ROOT_SANDBOX_FIX 1\n"))
         self.install("server")
-        self.prod("server", "--version", contains=["prod v0.2.0"])
+        self.prod("server", "--version", contains=["prod v0.2"])
         self.write(os.path.join(sp, "vlist", "drafts", "3.1.1.yml"), """
             format: "1"
             description: "3.1 with the fixed ROOT modulefile"
@@ -380,7 +380,7 @@ class Sandbox:
                   contains=["ROOT/V6.32.20_3.11.14-m2 (new)"])
         conf = open(os.path.join(cp, ".prod", "etc", "prod.conf")).read()
         self.install("clientA")
-        self.prod("clientA", "--version", contains=["prod v0.2.0"])
+        self.prod("clientA", "--version", contains=["prod v0.2"])
         if open(os.path.join(cp, ".prod", "etc", "prod.conf")).read() != conf:
             raise Failed("install.sh changed prod.conf")
         self.prod("clientA", "sync", "3.1.1")
@@ -389,9 +389,9 @@ class Sandbox:
         self.run("clientA", 'set -eu; . ~/setup_prod.sh 3.1; echo "fix=${ROOT_SANDBOX_FIX:-none}"', shell=True,
                  contains=["fix=none"])
         cur = os.path.join(cp, ".prod", "current")
-        os.symlink("versions/v0.1.0", cur + ".tmp")
+        os.symlink("versions/v0.1", cur + ".tmp")
         os.replace(cur + ".tmp", cur)
-        self.prod("clientA", "--version", contains=["prod v0.1.0"])
+        self.prod("clientA", "--version", contains=["prod v0.1"])
         self.prod("clientA", "verify", absent=["error"])
         with open(os.path.join(shome, "setup_prod.sh"), "rb") as f:
             if os.path.islink(os.path.join(shome, "setup_prod.sh")) or f.read() != legacy_setup:

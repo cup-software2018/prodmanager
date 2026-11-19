@@ -22,7 +22,7 @@ def released(**over):
     v = vlist.Vlist(
         description="PYTHON 3.11 + ROOT 6.32 (lsim)",
         released="2026-12-01T10:00:00+09:00",
-        released_by="prod v0.1.0 on cupdev0",
+        released_by="prod v0.1 on cupdev0",
         bundle=H3,
         products=[
             vlist.Product("PYTHON", "V3.11.14", H1, "PYTHON/V3.11.14", H2),

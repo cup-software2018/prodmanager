@@ -28,7 +28,7 @@ class Installed(FakeClient):
         env.update(extra)
         return env
 
-    def install(self, *args, check=True, version="v0.1.0"):
+    def install(self, *args, check=True, version="v0.1"):
         cmd = [os.path.join(REPO, "install.sh"), "--products", self.cprod]
         if version:
             cmd += ["--version-name", version]
@@ -47,10 +47,10 @@ class Installed(FakeClient):
 class TestInstall(Installed):
     def test_install(self):
         out = self.install("--role", "client", "--server", self.products)
-        self.assertIn("installed prod v0.1.0", out.stdout)
+        self.assertIn("installed prod v0.1", out.stdout)
         prod = os.path.join(self.cprod, ".prod")
-        self.assertEqual(os.readlink(os.path.join(prod, "current")), "versions/v0.1.0")
-        v = os.path.join(prod, "versions", "v0.1.0")
+        self.assertEqual(os.readlink(os.path.join(prod, "current")), "versions/v0.1")
+        v = os.path.join(prod, "versions", "v0.1")
         for rel in ("bin/prod", "lib/prod/cli.py", "share/setup_prod.sh", "share/setup_prod.csh",
                     "share/modulefiles", "share/recipes", "share/packages", "VERSION"):
             self.assertTrue(os.path.exists(os.path.join(v, rel)), rel)
@@ -69,7 +69,7 @@ class TestInstall(Installed):
         out = subprocess.run([os.path.join(self.home, ".local", "bin", "prod"), "list"], env=self.env(),
                              capture_output=True, text=True)
         self.assertEqual(out.returncode, 0, out.stderr)
-        self.assertIn("tool    v0.1.0", out.stdout)
+        self.assertIn("tool    v0.1", out.stdout)
         self.assertIn(f"role    client, server {self.products}", out.stdout)
 
     def test_upgrade_keeps_config_and_old_versions(self):
@@ -79,17 +79,17 @@ class TestInstall(Installed):
         with open(self.cpaths.conf, "rb") as f:
             conf = f.read()
         for i in range(2, 6):
-            self.install(version=f"v0.{i}.0")
+            self.install(version=f"v0.{i}")
         with open(self.cpaths.conf, "rb") as f:
             self.assertEqual(conf, f.read())
-        self.assertEqual(os.readlink(os.path.join(self.cprod, ".prod", "current")), "versions/v0.5.0")
+        self.assertEqual(os.readlink(os.path.join(self.cprod, ".prod", "current")), "versions/v0.5")
         self.assertEqual(sorted(os.listdir(os.path.join(self.cprod, ".prod", "versions"))),
-                         ["v0.3.0", "v0.4.0", "v0.5.0"])
+                         ["v0.3", "v0.4", "v0.5"])
         # the same version again needs --force
-        out = self.install(version="v0.5.0", check=False)
+        out = self.install(version="v0.5", check=False)
         self.assertNotEqual(out.returncode, 0)
         self.assertIn("already installed", out.stderr)
-        self.install("--force", version="v0.5.0")
+        self.install("--force", version="v0.5")
 
     def test_legacy_setup_prod_is_kept(self):
         legacy = os.path.join(self.home, "setup_prod.sh")
@@ -116,9 +116,9 @@ class TestInstall(Installed):
         self.assertIn("ok    tool", out.stdout)  # doctor accepts the kept legacy script
         self.assertNotIn("does not point to", out.stdout)
         # an upgrade keeps it too; only --replace-legacy-setup switches
-        self.install(version="v0.2.0")
+        self.install(version="v0.2")
         self.assertFalse(os.path.islink(legacy))
-        out = self.install("--replace-legacy-setup", version="v0.3.0")
+        out = self.install("--replace-legacy-setup", version="v0.3")
         self.assertTrue(os.path.islink(legacy))
         with open(legacy + ".pre-prod") as f:
             self.assertEqual(f.read(), "# legacy\n")

@@ -90,8 +90,8 @@ if [ -z "$VERSION_NAME" ]; then
         || die "$REPO is not a git checkout; cannot name the version (use --version-name for development)"
 fi
 [[ "$VERSION_NAME" =~ ^[A-Za-z0-9._+-]+$ ]] || die "invalid version name: $VERSION_NAME"
-if ! [[ "$VERSION_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "install.sh: warning: '$VERSION_NAME' is not a release tag (vX.Y.Z); nodes should run tagged versions" >&2
+if ! [[ "$VERSION_NAME" =~ ^v[0-9]+\.[0-9]+$ ]]; then
+    echo "install.sh: warning: '$VERSION_NAME' is not a release tag (vX.Y); nodes should run tagged versions" >&2
 fi
 
 PROD="$PRODUCTS/.prod"

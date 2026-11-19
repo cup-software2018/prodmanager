@@ -89,9 +89,9 @@ class TestPaths(unittest.TestCase):
     def test_products_dir_of(self):
         with tempfile.TemporaryDirectory() as d:
             products = os.path.join(d, "Products")
-            tool = os.path.join(products, ".prod", "versions", "v0.1.0")
+            tool = os.path.join(products, ".prod", "versions", "v0.1")
             os.makedirs(tool)
-            os.symlink("versions/v0.1.0", os.path.join(products, ".prod", "current"))
+            os.symlink("versions/v0.1", os.path.join(products, ".prod", "current"))
             self.assertEqual(config.products_dir_of(tool), os.path.realpath(products))
             self.assertEqual(config.products_dir_of(os.path.join(products, ".prod", "current")),
                              os.path.realpath(products))
