@@ -12,6 +12,7 @@ from .errors import EnvError
 
 SUSPICIOUS_SUFFIXES = ("~", ".swp", ".orig", ".rej", ".tgz", ".tar", ".tar.gz", ".tar.bz2", ".tar.xz", ".zip")
 _CORE_DUMP_RE = re.compile(r"^core(\.[0-9]+)?$")  # core, core.12345 (not core.mjs, core.py, ...)
+_ELF_CORE = 4  # e_type ET_CORE
 
 
 def _locked_mode(st_mode):
@@ -71,11 +72,25 @@ def unlock_dirs(root):
         os.chmod(dirpath, os.lstat(dirpath).st_mode | 0o700)
 
 
+def is_core_dump(path):
+    """True for an ELF core file. A file merely named 'core' (e.g. a JSON schema) is not one."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(18)
+    except OSError:
+        return False
+    if len(head) < 18 or head[:4] != b"\x7fELF" or head[5] not in (1, 2):
+        return False
+    return int.from_bytes(head[16:18], "little" if head[5] == 1 else "big") == _ELF_CORE
+
+
 def suspicious_names(root):
     """Paths under root that look like leftovers (editor backups, archives, core dumps)."""
     found = []
     for dirpath, dirnames, filenames in os.walk(root):
         for name in filenames:
-            if name.endswith(SUSPICIOUS_SUFFIXES) or _CORE_DUMP_RE.match(name):
-                found.append(os.path.relpath(os.path.join(dirpath, name), root))
+            path = os.path.join(dirpath, name)
+            if name.endswith(SUSPICIOUS_SUFFIXES) or (
+                    _CORE_DUMP_RE.match(name) and not os.path.islink(path) and is_core_dump(path)):
+                found.append(os.path.relpath(path, root))
     return sorted(found)

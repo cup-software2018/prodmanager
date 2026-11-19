@@ -28,8 +28,10 @@ class Installed(FakeClient):
         env.update(extra)
         return env
 
-    def install(self, *args, check=True, version="v0.1"):
+    def install(self, *args, check=True, version="v0.1", link_home=True):
         cmd = [os.path.join(REPO, "install.sh"), "--products", self.cprod]
+        if link_home:  # self.cprod is not $HOME/Products; act like a real node
+            cmd.append("--link-home")
         if version:
             cmd += ["--version-name", version]
         out = subprocess.run(cmd + list(args), env=self.env(), capture_output=True, text=True,
@@ -71,6 +73,32 @@ class TestInstall(Installed):
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertIn("tool    v0.1", out.stdout)
         self.assertIn(f"role    client, server {self.products}", out.stdout)
+
+    def test_test_install_leaves_home_alone(self):
+        """--products elsewhere (a test install) must not touch the real ~/setup_prod.sh."""
+        legacy = os.path.join(self.home, "setup_prod.sh")
+        with open(legacy, "w") as f:
+            f.write("# legacy setup\n")
+        out = self.install("--role", "client", "--server", self.products, link_home=False)
+        self.assertIn("nothing in", out.stdout)
+        self.assertEqual(sorted(os.listdir(self.home)), ["setup_prod.sh"])  # no .local, no .csh, no .pre-prod
+        with open(legacy) as f:
+            self.assertEqual(f.read(), "# legacy setup\n")
+        self.assertNotIn("does not point", out.stdout)
+        self.assertIn("a test install", out.stdout)
+        # the tool works when run by its path
+        prod = os.path.join(self.cprod, ".prod", "current", "bin", "prod")
+        out = subprocess.run([prod, "list"], env=self.env(), capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        # Products = ~/Products: linked by default
+        real = os.path.join(self.home, "Products")
+        os.rename(self.cprod, real)
+        os.symlink(real, self.cprod)  # keep the fixture's path valid
+        out = subprocess.run([os.path.join(REPO, "install.sh"), "--products", real, "--version-name", "v0.2"],
+                             env=self.env(), capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(os.readlink(legacy), os.path.join(real, ".prod", "current", "share", "setup_prod.sh"))
+        self.assertTrue(os.path.exists(legacy + ".pre-prod"))
 
     def test_upgrade_keeps_config_and_old_versions(self):
         self.install("--role", "client", "--server", self.products)

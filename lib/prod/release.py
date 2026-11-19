@@ -15,6 +15,7 @@ from typing import List, Optional
 
 from . import buildinfo as buildinfo_mod
 from . import fsutil, manifest, modulefile, recipe, state
+from . import progress as progress_mod
 from . import vlist as vlist_mod
 from .errors import CheckFailed, FormatError, TreeError, UsageError
 from .hashing import sha256_bytes, sha256_file
@@ -99,7 +100,8 @@ def _read_draft(paths, name, migrate):
         raise UsageError(f"no draft {draft}; write it first") from None
 
 
-def plan(paths, cfg, name, *, tool_root, tool, migrate=False, module_revs=(), now=None, host=None):
+def plan(paths, cfg, name, *, tool_root, tool, migrate=False, module_revs=(), now=None, host=None,
+         progress=progress_mod.SILENT):
     """Check everything and prepare a release without writing anything."""
     cfg.require_role("server", "release")
     vlist_mod.check_name(name)
@@ -123,7 +125,9 @@ def plan(paths, cfg, name, *, tool_root, tool, migrate=False, module_revs=(), no
             raise UsageError(f"--module-rev {r}: not a product of this vlist")
 
     plans = []
+    progress.line(f"{name}: {len(draft.products)} products")
     for p in draft.products:
+        timer = progress_mod.Timer()
         pp = ProductPlan(name=p.name, version=p.version, status="staging")
         plans.append(pp)
         vdir = paths.version_dir(p.name, p.version)
@@ -136,7 +140,10 @@ def plan(paths, cfg, name, *, tool_root, tool, migrate=False, module_revs=(), no
             with open(mpath, "rb") as f:
                 data = f.read()
             _, entries = manifest.loads(data)
+            progress.item(p.name, p.version, f"frozen: verifying {len(entries)} entries ...")
             findings = manifest.verify(entries, vdir)
+            progress.item(p.name, p.version, f"frozen: {'differs' if manifest.has_errors(findings) else 'ok'} "
+                                             f"({timer})")
             errors = [f for f in findings if f.level == "error"]
             if errors:
                 shown = "; ".join(f"{f.path}: {f.message}" for f in errors[:5])
@@ -149,11 +156,14 @@ def plan(paths, cfg, name, *, tool_root, tool, migrate=False, module_revs=(), no
             if not os.path.exists(paths.buildinfo_file(p.name, p.version)):
                 warnings.append(f"{p.name} {p.version}: frozen but has no buildinfo")
         else:
+            progress.item(p.name, p.version, "staging: hashing every file ...")
             try:
                 pp.entries = manifest.build(vdir)
             except TreeError as e:
                 problems.append(f"{p.name} {p.version}: {e}")
                 continue
+            progress.item(p.name, p.version, f"staging: {len(pp.entries)} entries, "
+                                             f"{progress_mod.size(progress_mod.total_size(pp.entries))} ({timer})")
             susp = fsutil.suspicious_names(vdir)
             if susp:
                 shown = ", ".join(susp[:3]) + (f", ... ({len(susp)} in all)" if len(susp) > 3 else "")
@@ -226,11 +236,12 @@ def plan(paths, cfg, name, *, tool_root, tool, migrate=False, module_revs=(), no
                        vlist_data=vlist_mod.dumps(v), warnings=warnings)
 
 
-def write(paths, rp, *, tool):
+def write(paths, rp, *, tool, progress=progress_mod.SILENT):
     """Carry out a ReleasePlan."""
     for pp in rp.products:
         vdir = paths.version_dir(pp.name, pp.version)
         if pp.status == "staging":
+            progress.item(pp.name, pp.version, "locking and writing the manifest ...")
             fsutil.lock_tree(vdir)
             changed = manifest.verify(pp.entries, vdir, quick=True)
             if manifest.has_errors(changed):
@@ -254,11 +265,13 @@ def write(paths, rp, *, tool):
                  detail=", ".join(f"{p.name} {p.version} ({p.status})" for p in rp.products))
 
 
-def release(paths, cfg, name, *, tool_root, tool, check=False, migrate=False, module_revs=()):
+def release(paths, cfg, name, *, tool_root, tool, check=False, migrate=False, module_revs=(),
+            progress=progress_mod.SILENT):
     with state.lock(paths, exclusive=True):
-        rp = plan(paths, cfg, name, tool_root=tool_root, tool=tool, migrate=migrate, module_revs=module_revs)
+        rp = plan(paths, cfg, name, tool_root=tool_root, tool=tool, migrate=migrate, module_revs=module_revs,
+                  progress=progress)
         if not check:
-            write(paths, rp, tool=tool)
+            write(paths, rp, tool=tool, progress=progress)
         return rp
 
 

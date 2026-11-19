@@ -7,6 +7,7 @@ import subprocess
 import sys
 
 from . import config, inventory, release, state
+from . import progress as progress_mod
 from . import doctor as doctor_mod
 from . import sync as sync_mod
 from . import verify as verify_mod
@@ -39,7 +40,7 @@ class _Parser(argparse.ArgumentParser):
 def _parser():
     p = _Parser(prog="prod", description="prodmanager management tool")
     p.add_argument("--version", action="store_true", help="print the tool version and exit")
-    p.add_argument("-q", "--quiet", action="store_true", help="print only errors")
+    p.add_argument("-q", "--quiet", action="store_true", help="print only errors (no progress lines)")
     p.add_argument("--json", action="store_true", help="machine-readable output (list, verify)")
     sub = p.add_subparsers(dest="command", metavar="<command>", parser_class=_Parser)
 
@@ -203,14 +204,15 @@ def main(argv=None, tool_root=None, products=None):
         tool = tool_version(tool_root)
         paths, cfg = _context(tool_root, products)
         out = open(os.devnull, "w") if ns.quiet else sys.stdout
+        progress = progress_mod.Progress(sys.stderr, quiet=ns.quiet)
 
         if ns.command == "sync":
             results = sync_mod.sync(paths, cfg, ns.names, tool=tool, dry_run=ns.dry_run, force=ns.force,
-                                    retrust=ns.retrust, installed=ns.installed)
+                                    retrust=ns.retrust, installed=ns.installed, progress=progress)
             _print_sync(results, out)
         elif ns.command == "verify":
             reports = verify_mod.verify(paths, cfg, ns.names, quick=ns.quick, fix_perms=ns.fix_perms,
-                                        remote=ns.remote)
+                                        remote=ns.remote, progress=progress)
             ok = all(r.ok for r in reports)
             state.record(paths, tool, "verify", vlists=[r.name for r in reports],
                          result="ok" if ok else "error", quick=ns.quick)
@@ -253,7 +255,7 @@ def main(argv=None, tool_root=None, products=None):
                 print(f"{len(candidates)} item(s) would be deleted; run 'prod gc --yes' to delete them", file=out)
         elif ns.command == "release":
             rp = release.release(paths, cfg, ns.name, tool_root=tool_root, tool=tool, check=ns.check,
-                                 migrate=ns.migrate, module_revs=ns.module_rev)
+                                 migrate=ns.migrate, module_revs=ns.module_rev, progress=progress)
             _print_release(rp, ns.check, out)
         elif ns.command == "withdraw":
             release.withdraw(paths, cfg, ns.name, tool=tool, reason=ns.reason, replaced_by=ns.replaced_by)

@@ -216,7 +216,8 @@ class Sandbox:
         p, home = self.node(node)
         os.makedirs(p, exist_ok=True)
         os.makedirs(home, exist_ok=True)
-        return self.run(node, [os.path.join(self.repo, "install.sh"), "--products", p] + list(args))
+        # each node's Products is next to its home, not ~/Products: link HOME as a real node would
+        return self.run(node, [os.path.join(self.repo, "install.sh"), "--products", p, "--link-home"] + list(args))
 
     def server_file(self, rel):
         return os.path.join(self.node("server")[0], rel)

@@ -2,7 +2,7 @@
 # Install the prod tool from this checkout into <Products>/.prod.
 #
 #   ./install.sh [--products DIR] [--role client|server] [--server SPEC] [--force] [--keep N]
-#                [--keep-legacy-setup | --replace-legacy-setup]
+#                [--keep-legacy-setup | --replace-legacy-setup] [--link-home | --no-link-home]
 #
 # - Copies the tool to <Products>/.prod/versions/<version>/ and switches the 'current' symlink atomically.
 # - Creates <Products>/.prod/etc/prod.conf only if it does not exist yet.
@@ -14,6 +14,9 @@
 #   install_products.sh copy the server's ~/setup_prod* (scp follows symlinks), so those files must stay
 #   legacy until no node uses install_products.sh any more. Then run install.sh --replace-legacy-setup once.
 #   Meanwhile the new setup script is <Products>/.prod/current/share/setup_prod.sh.
+# - Files in $HOME are touched only when the Products directory is ~/Products (a real node). A test install
+#   elsewhere (--products /some/test/Products) leaves $HOME alone unless --link-home is given; run its
+#   tool as <Products>/.prod/current/bin/prod.
 set -euo pipefail
 
 REPO="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -24,12 +27,13 @@ FORCE=0
 KEEP=3
 VERSION_NAME=""
 KEEP_LEGACY_SETUP=""
+LINK_HOME=""
 REQUIRED_PACKAGES=(environment-modules rsync openssh-clients python3 python3-pyyaml git)
 
 die() { echo "install.sh: $*" >&2; exit 1; }
 
 usage() {
-    sed -n '2,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '2,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
     cat <<'EOF'
 Options:
   --products DIR    Products directory (default: $HOME/Products). It must exist and belong to you.
@@ -43,6 +47,9 @@ Options:
                     (default where role is 'server'; see above)
   --replace-legacy-setup
                     link ~/setup_prod.sh to the new one even where role is 'server' (end of the transition)
+  --link-home       link ~/setup_prod.sh, ~/setup_prod.csh and ~/.local/bin/prod even though --products
+                    is not ~/Products
+  --no-link-home    touch nothing in $HOME even though --products is ~/Products
 EOF
 }
 
@@ -56,6 +63,8 @@ while [ $# -gt 0 ]; do
         --version-name) VERSION_NAME="${2:?}"; shift 2 ;;
         --keep-legacy-setup) KEEP_LEGACY_SETUP=1; shift ;;
         --replace-legacy-setup) KEEP_LEGACY_SETUP=0; shift ;;
+        --link-home) LINK_HOME=1; shift ;;
+        --no-link-home) LINK_HOME=0; shift ;;
         -h|--help) usage; exit 0 ;;
         *) usage >&2; die "unknown option: $1" ;;
     esac
@@ -183,7 +192,14 @@ link() {  # link TARGET NAME: make NAME a symlink to TARGET; keep a real file as
     ln -s -- "$target" "$name.tmp.$$"
     mv -T -f -- "$name.tmp.$$" "$name"
 }
-if [ -z "$KEEP_LEGACY_SETUP" ]; then
+if [ -z "$LINK_HOME" ]; then
+    # default: only a real node (Products is ~/Products) gets links in $HOME, never a test install
+    [ "$PRODUCTS" = "${HOME%/}/Products" ] && LINK_HOME=1 || LINK_HOME=0
+fi
+if [ "$LINK_HOME" -eq 0 ]; then
+    echo "install.sh: $PRODUCTS is not ~/Products: nothing in $HOME was linked or changed" \
+         "(test install; --link-home links anyway). Run this tool as $PROD/current/bin/prod"
+elif [ -z "$KEEP_LEGACY_SETUP" ]; then
     # default: keep the legacy setup script where this node is the products server
     node_role="$("${PY[@]}" '
 import sys
@@ -193,15 +209,17 @@ print(config.load(config.Paths(sys.argv[2]), env={}).role)
 ' "$TARGET/lib" "$PRODUCTS")" || die "cannot read $PROD/etc/prod.conf"
     [ "$node_role" = "server" ] && KEEP_LEGACY_SETUP=1 || KEEP_LEGACY_SETUP=0
 fi
-mkdir -p "$HOME/.local/bin"
-if [ "$KEEP_LEGACY_SETUP" -eq 1 ]; then
-    echo "install.sh: --keep-legacy-setup: ~/setup_prod.sh is left as it is; the new one is" \
-         "$PROD/current/share/setup_prod.sh"
-else
-    link "$PROD/current/share/setup_prod.sh" "$HOME/setup_prod.sh"
-    link "$PROD/current/share/setup_prod.csh" "$HOME/setup_prod.csh"
+if [ "$LINK_HOME" -eq 1 ]; then
+    mkdir -p "$HOME/.local/bin"
+    if [ "$KEEP_LEGACY_SETUP" -eq 1 ]; then
+        echo "install.sh: --keep-legacy-setup: ~/setup_prod.sh is left as it is; the new one is" \
+             "$PROD/current/share/setup_prod.sh"
+    else
+        link "$PROD/current/share/setup_prod.sh" "$HOME/setup_prod.sh"
+        link "$PROD/current/share/setup_prod.csh" "$HOME/setup_prod.csh"
+    fi
+    link "$PROD/current/bin/prod" "$HOME/.local/bin/prod"
 fi
-link "$PROD/current/bin/prod" "$HOME/.local/bin/prod"
 
 # --------------------------------------------------------------------------- old versions
 

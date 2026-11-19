@@ -26,9 +26,14 @@ def _base(cfg):
     return cmd
 
 
-def _run(cmd):
+def _run(cmd, live=None):
+    """Run rsync; stderr is always captured (for messages). With live (a terminal stream), rsync's stdout
+    goes there, so its progress line is shown."""
     try:
-        return subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if live is None:
+            return subprocess.run(cmd, capture_output=True, text=True, check=False)
+        live.flush()
+        return subprocess.run(cmd, stdout=live, stderr=subprocess.PIPE, text=True, check=False)
     except FileNotFoundError:
         raise EnvError("rsync is not installed") from None
 
@@ -58,15 +63,18 @@ def fetch_files(cfg, rel_paths, dest):
     return {r for r in rel_paths if os.path.lexists(os.path.join(dest, r))}
 
 
-def fetch_tree(cfg, rel_dir, dest, *, link_dest=None, checksum=False):
-    """Mirror a server directory into dest."""
+def fetch_tree(cfg, rel_dir, dest, *, link_dest=None, checksum=False, live=None):
+    """Mirror a server directory into dest. live: a terminal stream for rsync's progress line, or None."""
     cmd = _base(cfg) + list(TREE_OPTIONS)
     if checksum:
         cmd.append("--checksum")
     if link_dest:
         cmd.append(f"--link-dest={os.path.abspath(link_dest)}")
+    if live is not None:
+        # one overall progress line; without incremental recursion the total is known from the start
+        cmd += ["--info=progress2", "--no-inc-recursive"]
     cmd += [cfg.server.rsync_url(rel_dir) + "/", dest + "/"]
-    out = _run(cmd)
+    out = _run(cmd, live)
     if out.returncode in _CONNECTION_CODES:
         raise _connection_error(cfg, out)
     if out.returncode != 0:

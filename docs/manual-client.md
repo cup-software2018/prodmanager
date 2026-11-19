@@ -162,6 +162,21 @@ cd ~/Devs/prodmanager && git checkout vX.Y
 - 설정은 `/home/cupsoft/Products/.prod/etc/prod.conf`에 있습니다. 서버를 바꿀 때만 고칩니다.
 - 끝에 `prod doctor --quick` 결과가 나옵니다.
 
+**시험용 설치.** 실제 Products를 건드리지 않고 다른 곳에 설치해 볼 수 있습니다. `--products`가 `~/Products`가
+아니면 install.sh는 HOME의 파일(`~/setup_prod.sh` 등)을 **건드리지 않으므로**, 그 노드의 기존 환경은 그대로입니다.
+도구는 경로로 직접 실행합니다.
+
+```bash
+T=/scratch/cupsoft/prodtest && mkdir -p $T/Products
+./install.sh --products $T/Products --role client --server cupsoft@192.168.0.150:/home/cupsoft/Products
+$T/Products/.prod/current/bin/prod sync daq_2.1
+. $T/Products/.prod/current/share/setup_prod.sh daq_2.1
+```
+
+고정 modulefile 안의 경로는 `/home/cupsoft/Products/...`이므로, 시험용 설치에서 환경을 설정하면 그 노드의
+`/home/cupsoft/Products`에 있는 바이너리를 씁니다. 받기와 검증(sync, verify)을 시험하는 용도입니다. 지울 때는
+`chmod -R u+w $T && rm -rf $T`.
+
 ### 4.4 시스템 패키지 (root)
 
 ```bash
@@ -202,6 +217,11 @@ sync가 하는 일:
 - 받은 것을 sha256으로 전부 확인하고 잠근 뒤(`a-w`) 제자리에 놓습니다. 실행 중인 프로그램은 깨지지 않습니다.
 - vlist 파일은 맨 마지막에 놓습니다. `setup_prod.sh`로 보이는 vlist는 필요한 것이 모두 준비된 것입니다.
 - 중간에 끊겨도(네트워크 등) 다시 실행하면 이어서 받습니다.
+
+**진행 상황**은 stderr에 버전마다 한 줄씩 나옵니다(`transferring … entries, 2.6 GB ...` → `verifying ...` →
+`transferred and verified (2.6 GB, 1m12s)`). 터미널에서 실행하면 받는 동안 rsync의 진행률(%, 속도, 남은 시간)도
+한 줄로 보입니다. 위의 요약은 stdout이라, 로그로 남길 때는 `prod sync 3.1 2>&1 | tee sync.log`처럼 둘 다 받습니다.
+`prod -q sync …`는 진행 줄과 요약을 모두 끕니다(오류만 출력). `prod verify`도 버전마다 진행 줄을 보여 줍니다.
 
 ## 6. 점검과 복구
 

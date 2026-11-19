@@ -198,16 +198,24 @@ class TestRelease(FakeServer):
 
     def test_suspicious_files_are_warnings(self):
         d = self.paths.version_dir("HDF5", "V1.14.2")
-        for name in ("lib/old.tgz", "core.4711", "lib/a~", "lib/b.orig", "lib/core.mjs", "lib/core.py"):
+        elf_core = b"\x7fELF\x02\x01\x01" + bytes(9) + (4).to_bytes(2, "little")  # 64-bit LE, e_type ET_CORE
+        elf_exec = b"\x7fELF\x02\x01\x01" + bytes(9) + (2).to_bytes(2, "little")  # e_type ET_EXEC
+        os.makedirs(os.path.join(d, "schemas"))
+        files = {"lib/old.tgz": b"x", "core.4711": elf_core, "lib/a~": b"x", "lib/b.orig": b"x",
+                 "lib/core.mjs": b"x", "lib/core.py": b"x",
+                 "schemas/core": b'{"$schema": "core vocabulary"}\n',  # named core, but not a core dump
+                 "lib/core": elf_exec}
+        for name, data in files.items():
             with open(os.path.join(d, name), "wb") as f:
-                f.write(b"x")
+                f.write(data)
         self.draft("x", [("HDF5", "V1.14.2")])
         rp = self.release("x", check=True)
         [w] = rp.warnings  # one summary line per version, not one per file
         self.assertIn("HDF5 V1.14.2: 4 suspicious file(s)", w)
         self.assertIn("(4 in all)", w)
-        self.assertNotIn("core.mjs", w)
-        self.assertNotIn("core.py", w)
+        self.assertIn("core.4711", w)
+        for name in ("core.mjs", "core.py", "schemas/core", "lib/core,"):
+            self.assertNotIn(name, w)
 
     def test_migrate(self):
         with open(self.paths.legacy_vlist_file("3.0"), "w") as f:

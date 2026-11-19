@@ -3,12 +3,14 @@
 import io
 import json
 import os
+import select
 import stat
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
 from prod import cli, config, fsutil, inventory, state, transfer
+from prod import progress as progress_mod
 from prod import sync as sync_mod
 from prod import verify as verify_mod
 from prod.errors import CheckFailed, EnvError, LockBusy
@@ -230,12 +232,24 @@ class TestClientCli(FakeClient):
         return code, out.getvalue(), err.getvalue()
 
     def test_commands(self):
-        code, out, _ = self.run_cli("sync", "3.0")
+        code, out, err = self.run_cli("sync", "3.0")
         self.assertEqual(code, 0)
         self.assertIn("first sync", out)
-        code, out, _ = self.run_cli("verify")
+        # progress lines go to stderr, the summary to stdout
+        self.assertIn("3.0: 2 products", err)
+        self.assertRegex(err, r"PYTHON +V3.11.14 +transferring \d+ entries")
+        self.assertRegex(err, r"PYTHON +V3.11.14 +transferred and verified")
+        self.assertNotIn("transferring", out)
+        code, out, err = self.run_cli("sync", "3.0", "3.1")
+        self.assertRegex(err, r"PYTHON +V3.11.14 +in place, verified")
+        self.assertRegex(err, r"HDF5 +V1.14.2 +transferred and verified")
+        code, out, err = self.run_cli("verify")
         self.assertEqual(code, 0)
         self.assertIn("3.0", out)
+        self.assertRegex(err, r"ROOT +V6.32.20_3.11.14 +ok \(")
+        self.assertRegex(err, r"PYTHON +V3.11.14 +checked above")
+        code, out, err = self.run_cli("-q", "verify")
+        self.assertEqual((code, out, err), (0, "", ""))
         code, out, _ = self.run_cli("--json", "verify")
         self.assertTrue(json.loads(out)[0]["ok"])
         code, out, _ = self.run_cli("--json", "list")
@@ -249,6 +263,37 @@ class TestClientCli(FakeClient):
         self.assertEqual(self.run_cli("sync")[0], 2)
         self.assertEqual(self.run_cli("gc")[0], 0)
         self.assertEqual(self.run_cli("remove", "9.9")[0], 1)
+
+
+
+class TestLiveProgress(FakeClient):
+    """On a terminal, sync shows rsync's own progress line; elsewhere it does not."""
+
+    def test_live_only_on_a_terminal(self):
+        self.assertIsNone(progress_mod.Progress(io.StringIO()).live)
+        self.assertIsNone(progress_mod.SILENT.live)
+
+        master, slave = os.openpty()
+        try:
+            with os.fdopen(slave, "w", closefd=True) as term:
+                prog = progress_mod.Progress(term)
+                self.assertIs(prog.live, term)
+                self.assertIsNone(progress_mod.Progress(term, quiet=True).live)
+                sync_mod.sync(self.cpaths, self.ccfg, ["3.0"], tool=TOOL, progress=prog)
+                shown = b""
+                while True:  # drain what the pseudo terminal received
+                    if not select.select([master], [], [], 0.2)[0]:
+                        break
+                    chunk = os.read(master, 65536)
+                    if not chunk:
+                        break
+                    shown += chunk
+        finally:
+            os.close(master)
+        text = shown.decode("utf-8", "replace")
+        self.assertIn("transferring", text)
+        self.assertIn("100%", text)  # rsync --info=progress2
+        self.assertTrue(self.verify("3.0")[0].ok)
 
 
 if __name__ == "__main__":

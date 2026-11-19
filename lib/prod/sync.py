@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 
 from . import fsutil, manifest, state, transfer
+from . import progress as progress_mod
 from . import vlist as vlist_mod
 from .errors import CheckFailed, UsageError
 from .hashing import sha256_file
@@ -58,8 +59,10 @@ def _first(findings, n=3):
     return shown + (f" (and {len(errors) - n} more)" if len(errors) > n else "")
 
 
-def _transfer(paths, cfg, name, version, entries):
+def _transfer(paths, cfg, name, version, entries, progress):
     """Mirror one version from the server and swap it in (step 5)."""
+    timer = progress_mod.Timer()
+    nbytes = progress_mod.size(progress_mod.total_size(entries))
     vdir = paths.version_dir(name, version)
     parent = os.path.dirname(vdir)
     partial = os.path.join(parent, f".{version}.partial")
@@ -69,11 +72,16 @@ def _transfer(paths, cfg, name, version, entries):
         fsutil.unlock_dirs(partial)  # resume an interrupted transfer
     link = vdir if os.path.isdir(vdir) and not os.path.islink(vdir) else None
     rel = f"{name}/{version}"
-    transfer.fetch_tree(cfg, rel, partial, link_dest=link)
+    progress.item(name, version, f"transferring {len(entries)} entries, {nbytes} ...")
+    transfer.fetch_tree(cfg, rel, partial, link_dest=link, live=progress.live)
+    progress.item(name, version, "verifying ...")
     findings = manifest.verify(entries, partial)
     if manifest.has_errors(findings):
+        progress.item(name, version, f"differs from the manifest ({_first(findings, 1)}); "
+                                     "transferring again with full checksums ...")
         fsutil.unlock_dirs(partial)
-        transfer.fetch_tree(cfg, rel, partial, link_dest=link, checksum=True)
+        transfer.fetch_tree(cfg, rel, partial, link_dest=link, checksum=True, live=progress.live)
+        progress.item(name, version, "verifying ...")
         findings = manifest.verify(entries, partial)
         if manifest.has_errors(findings):
             raise CheckFailed(f"{name} {version}: the server's files differ from the manifest even after a full "
@@ -84,9 +92,10 @@ def _transfer(paths, cfg, name, version, entries):
         os.rename(vdir, old)
     os.rename(partial, vdir)
     fsutil.remove_tree(old)
+    progress.item(name, version, f"transferred and verified ({nbytes}, {timer})")
 
 
-def _sync_one(paths, cfg, name, *, tool, dry_run, force, retrust, done):
+def _sync_one(paths, cfg, name, *, tool, dry_run, force, retrust, done, progress):
     vlist_mod.check_name(name)
     started = time.monotonic()
     os.makedirs(paths.tmp, exist_ok=True)
@@ -94,6 +103,7 @@ def _sync_one(paths, cfg, name, *, tool, dry_run, force, retrust, done):
     try:
         # 1-3: vlist, trust, withdrawal
         vrel, wrel = f"vlist/{name}{vlist_mod.SUFFIX}", f"vlist/{name}.withdrawn"
+        progress.line(f"{name}: reading the vlist from {cfg.server.spec} ...")
         got = transfer.fetch_files(cfg, [vrel, wrel], tmp)
         if vrel not in got:
             raise CheckFailed(f"vlist '{name}' is not on the products server")
@@ -142,25 +152,33 @@ def _sync_one(paths, cfg, name, *, tool, dry_run, force, retrust, done):
                 state.record(paths, tool, "retrust", vlist=name, old_hash=trusted, new_hash=res.vlist_hash)
 
         # 5: binaries
+        progress.line(f"{name}: {len(v.products)} products")
         for p in v.products:
             key = (p.name, p.version)
             _, entries = manifest.loads(_read(os.path.join(tmp, f"{p.name}/{p.version}.manifest")))
             vr = VersionResult(p.name, p.version, "in place", len(entries))
             res.versions.append(vr)
             if key in done:
+                progress.item(p.name, p.version, "in place (checked above)")
                 continue
             vdir = paths.version_dir(p.name, p.version)
             if os.path.isdir(vdir) and not os.path.islink(vdir):
+                timer = progress_mod.Timer()
+                progress.item(p.name, p.version, f"checking the installed copy ({len(entries)} entries) ...")
                 findings = manifest.verify(entries, vdir)
                 if not manifest.has_errors(findings):
                     if findings and not dry_run:
                         fsutil.lock_tree(vdir)
+                    progress.item(p.name, p.version, f"in place, verified ({timer})")
                     done.add(key)
                     continue
+                progress.item(p.name, p.version, f"installed copy differs ({_first(findings, 1)})")
             if dry_run:
                 vr.action = "would transfer"
+                progress.item(p.name, p.version, "would transfer "
+                              f"{progress_mod.size(progress_mod.total_size(entries))}")
                 continue
-            _transfer(paths, cfg, p.name, p.version, entries)
+            _transfer(paths, cfg, p.name, p.version, entries, progress)
             vr.action = "transferred"
             done.add(key)
 
@@ -186,7 +204,8 @@ def _sync_one(paths, cfg, name, *, tool, dry_run, force, retrust, done):
         fsutil.remove_tree(tmp)
 
 
-def sync(paths, cfg, names, *, tool, dry_run=False, force=False, retrust=False, installed=False):
+def sync(paths, cfg, names, *, tool, dry_run=False, force=False, retrust=False, installed=False,
+         progress=progress_mod.SILENT):
     cfg.require_role("client", "sync")
     cfg.require_server()
     with state.lock(paths, exclusive=True):
@@ -203,7 +222,7 @@ def sync(paths, cfg, names, *, tool, dry_run=False, force=False, retrust=False, 
         for name in names:
             try:
                 results.append(_sync_one(paths, cfg, name, tool=tool, dry_run=dry_run, force=force,
-                                         retrust=retrust, done=done))
+                                         retrust=retrust, done=done, progress=progress))
             except CheckFailed as e:
                 if not dry_run:
                     state.record(paths, tool, "sync", vlist=name, result="error", detail=str(e))

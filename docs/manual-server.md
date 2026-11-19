@@ -251,8 +251,12 @@ release가 하는 일:
 
 문제는 한 번에 모아서 보고합니다. 고친 뒤 다시 실행하면 됩니다.
 
-`--check`의 `warning: ... suspicious file ...`(편집기 백업 `*~`, 압축 파일, core 파일)은 release 전에 반드시 확인하세요.
-release하면 그 파일도 버전의 일부로 고정됩니다.
+진행 상황은 stderr에 버전마다 나옵니다(`staging: hashing every file ...`, `frozen: verifying … entries ...` 등). 위의
+요약은 stdout입니다. `prod -q release …`는 둘 다 끕니다.
+
+`--check`의 `warning: ... suspicious file ...`(편집기 백업 `*~`, `*.orig`, 압축 파일, ELF core dump)은 release 전에 반드시
+확인하세요. release하면 그 파일도 버전의 일부로 고정됩니다. 패키지가 원래 함께 설치하는 파일(예: Python의
+`lib/python3.11/test/*.zip`, JupyterLab의 `package.json.orig`)도 경고에 나올 수 있는데, 그런 것은 그대로 두면 됩니다.
 
 ### 5.5 client에 알리기
 

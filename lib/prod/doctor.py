@@ -52,7 +52,14 @@ def check_tool(paths, cfg, tool, home):
         return Check("fail", "tool", f"{paths.current} is missing; run install.sh")
     owner = pwd.getpwuid(os.stat(paths.products).st_uid).pw_name
     me = pwd.getpwuid(os.getuid()).pw_name
-    if me == owner:
+    # install.sh links $HOME only for a real node (Products is ~/Products) or with --link-home
+    home_prod = os.path.join(home, ".local", "bin", "prod")
+    linked_here = (os.path.normpath(paths.products) == os.path.join(home, "Products")
+                   or (os.path.islink(home_prod) and os.readlink(home_prod).startswith(paths.prod + os.sep)))
+    if me == owner and not linked_here:
+        details.append(f"nothing in {home} points here ({paths.products} is not ~/Products: a test install); "
+                       f"the tool is {os.path.join(paths.current, 'bin', 'prod')}")
+    elif me == owner:
         links = [(".local/bin/prod", "bin/prod")]
         legacy = os.path.join(home, "setup_prod.sh")
         if os.path.exists(legacy) and not os.path.islink(legacy):

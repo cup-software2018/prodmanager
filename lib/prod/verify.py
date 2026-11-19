@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from . import fsutil, manifest, state, transfer
+from . import progress as progress_mod
 from . import vlist as vlist_mod
 from .errors import FormatError
 from .hashing import sha256_file
@@ -52,16 +53,19 @@ def read_withdrawn(path):
         return None
 
 
-def check_version(paths, name, version, *, quick=False, fix_perms=False):
+def check_version(paths, name, version, *, quick=False, fix_perms=False, progress=progress_mod.SILENT):
     """Compare one version directory with its manifest. Returns (errors, warnings) as strings."""
     vdir = paths.version_dir(name, version)
     try:
         _, entries = manifest.load(paths.manifest_file(name, version))
     except FileNotFoundError:
         return [f"{name} {version}: manifest is missing"], []
+    timer = progress_mod.Timer()
+    progress.item(name, version, f"verifying {len(entries)} entries{' (quick)' if quick else ''} ...")
     findings = manifest.verify(entries, vdir, quick=quick)
     errors = [f for f in findings if f.level == "error"]
     warnings = [f for f in findings if f.level == "warning"]
+    progress.item(name, version, (f"{len(errors)} difference(s)" if errors else "ok") + f" ({timer})")
     err = [f"{name} {version}: {f.path}: {f.message}" for f in errors[:MAX_SHOWN]]
     if len(errors) > MAX_SHOWN:
         err.append(f"{name} {version}: ... and {len(errors) - MAX_SHOWN} more differences")
@@ -89,7 +93,8 @@ def _check_file(path, expected, label, fix_perms, rep):
             rep.warnings.append(f"{label}: writable")
 
 
-def verify_vlist(paths, cfg, name, *, quick=False, fix_perms=False, remote=False, cache=None):
+def verify_vlist(paths, cfg, name, *, quick=False, fix_perms=False, remote=False, cache=None,
+                 progress=progress_mod.SILENT):
     cache = {} if cache is None else cache
     rep = Report(name)
     vfile = paths.vlist_file(name)
@@ -134,6 +139,7 @@ def verify_vlist(paths, cfg, name, *, quick=False, fix_perms=False, remote=False
             msg += f" (use {rep.withdrawn['replaced_by']} instead)"
         rep.warnings.append(msg)
 
+    progress.line(f"{name}: {len(v.products)} products")
     _check_file(paths.bundle_file(name), v.bundle, "bundle modulefile", fix_perms, rep)
     for p in v.products:
         _check_file(paths.manifest_file(p.name, p.version), p.manifest, f"{p.name} {p.version} manifest",
@@ -141,7 +147,10 @@ def verify_vlist(paths, cfg, name, *, quick=False, fix_perms=False, remote=False
         _check_file(paths.module_file(p.module), p.modulefile, f"modulefile {p.module}", fix_perms, rep)
         key = (p.name, p.version)
         if key not in cache:
-            cache[key] = check_version(paths, p.name, p.version, quick=quick, fix_perms=fix_perms)
+            cache[key] = check_version(paths, p.name, p.version, quick=quick, fix_perms=fix_perms,
+                                       progress=progress)
+        else:
+            progress.item(p.name, p.version, "checked above")
         err, warn = cache[key]
         rep.errors += err
         rep.warnings += warn
@@ -164,7 +173,8 @@ def frozen_versions(paths):
     return sorted(result)
 
 
-def verify(paths, cfg, names=None, *, quick=False, fix_perms=False, remote=False):
+def verify(paths, cfg, names=None, *, quick=False, fix_perms=False, remote=False,
+           progress=progress_mod.SILENT):
     """Verify vlists (all installed ones if names is empty). On the server, also every frozen version that
     is in no vlist. Returns a list of Reports."""
     if remote and cfg.role != "client":
@@ -174,13 +184,17 @@ def verify(paths, cfg, names=None, *, quick=False, fix_perms=False, remote=False
         all_names = installed_vlists(paths)
         names = list(names) if names else all_names
         cache: Dict = {}
-        reports = [verify_vlist(paths, cfg, n, quick=quick, fix_perms=fix_perms, remote=remote, cache=cache)
+        reports = [verify_vlist(paths, cfg, n, quick=quick, fix_perms=fix_perms, remote=remote, cache=cache,
+                                progress=progress)
                    for n in names]
         if cfg.role == "server" and names == all_names:
             orphans = Report("(frozen versions in no vlist)")
-            for key in frozen_versions(paths):
+            rest = [key for key in frozen_versions(paths) if key not in cache]
+            if rest:
+                progress.line(f"frozen versions in no vlist: {len(rest)}")
+            for key in rest:
                 if key not in cache:
-                    err, warn = check_version(paths, *key, quick=quick, fix_perms=fix_perms)
+                    err, warn = check_version(paths, *key, quick=quick, fix_perms=fix_perms, progress=progress)
                     orphans.errors += err
                     orphans.warnings += warn
             if orphans.errors or orphans.warnings:
