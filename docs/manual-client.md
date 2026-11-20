@@ -234,6 +234,11 @@ prod doctor                      # 도구, 서버 접속, 시스템 패키지, m
 prod list                        # vlist, 버전과 쓰는 vlist, 관리 밖의 파일
 ```
 
+`prod doctor`의 ldd 점검은 vlist의 모든 실행 파일과 라이브러리가 필요한 공유 라이브러리를 찾는지 봅니다. 다음은 세지
+않고 "not counted: …"로 개수만 보여 줍니다: pip wheel이 같은 디렉토리에 함께 넣은 라이브러리(실제로는 찾음), Qt의
+plugin과 QML 모듈(쓸 때만 불러옴; 화면을 띄우는 platform plugin은 셈), recipe의 `ldd_ignore`에 적힌 선택 부분.
+FAIL이면 빠진 라이브러리는 대개 시스템 패키지이므로 `postinstall.sh`를 다시 실행합니다(4.4절).
+
 `prod verify` 출력의 해시(`sha256:…`)를 노드끼리 비교하면 같은 release를 쓰는지 알 수 있습니다.
 `prod --json verify`(`list`, `doctor`도 같음)는 결과를 JSON으로 출력합니다. 스크립트로 결과를 읽을 때 씁니다.
 

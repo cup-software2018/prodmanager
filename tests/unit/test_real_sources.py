@@ -51,7 +51,7 @@ class TestRealSources(unittest.TestCase):
                     for d, _ in r.depends:
                         modulefile.load_source(SRC, d)
                     count += 1
-        self.assertEqual(count, 8)
+        self.assertEqual(count, 12)
 
     def test_legacy_vlists_satisfy_dependency_order(self):
         """What prod release --migrate will check, before touching the server."""
@@ -100,6 +100,22 @@ myfunc() {{ echo hi; }}
             self.assertFalse(any(l.startswith("setenv FOO_HOME") for l in lines))
             r = subprocess.run(["tclsh"], input=f"puts [info complete {{{out}}}]", capture_output=True, text=True)
             self.assertEqual(r.stdout.strip(), "1")
+
+    def test_prefix_through_a_symlink(self):
+        # ROOT 6.40's thisroot.sh resolves its location physically; the module must keep the given prefix
+        with tempfile.TemporaryDirectory() as d:
+            real = os.path.join(d, "disk", "Products", "ROOT", "V1")
+            os.makedirs(os.path.join(real, "bin"))
+            os.symlink(os.path.join(d, "disk", "Products"), os.path.join(d, "Products"))
+            prefix = os.path.join(d, "Products", "ROOT", "V1")
+            script = os.path.join(real, "bin", "setup.sh")
+            with open(script, "w") as f:
+                f.write(f'export PATH="{real}/bin:$PATH"\nexport JUPYTER_CONFIG_PATH="{real}/etc/notebook"\n'
+                        f'export OTHER="{real}2/x"\n')
+            lines = sh2mod.capture(prefix, script).splitlines()
+            self.assertIn(f'prepend-path PATH "{prefix}/bin"', lines)
+            self.assertIn(f'setenv JUPYTER_CONFIG_PATH "{prefix}/etc/notebook"', lines)
+            self.assertIn(f'setenv OTHER "{real}2/x"', lines)  # only the version directory itself is mapped
 
     def test_backslash_value_is_refused(self):
         with tempfile.TemporaryDirectory() as d:

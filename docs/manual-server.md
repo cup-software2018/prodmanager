@@ -180,6 +180,20 @@ make install
 
 release 전까지는 이 디렉토리를 마음대로 고치거나 지워도 됩니다(staging). client는 받지 않습니다.
 
+PYTHON은 `recipes/PYTHON/build.sh <버전>`이 소스 받기, configure, make, 패키지 설치(`recipes/PYTHON/V<버전>.requirements.txt`)
+까지 합니다. ROOT(`recipes/ROOT/build.sh <ROOT 버전> <Python 버전>`), GEANT4(`recipes/GEANT4/build.sh <버전>`),
+HDF5(`recipes/HDF5/build.sh <버전>`; HDF5 자체 test와, DAQ처럼 `find_package`로 찾아 쓰고 읽는 `recipes/HDF5/check`)도
+같은 방식이고, cmake 옵션은 `recipes/<NAME>/V<버전>.options`에 있습니다. 깨끗한 환경에서 실행되므로 vlist를 load한
+shell에서 실행해도 섞이지 않습니다. 컴파일 출력은 `--workdir`의 로그 파일로 가고, 화면에는 오래 걸리는 단계 동안 1분마다
+진행 상황이 한 줄씩 나옵니다(`build.sh: compiling 45% at 12:31 (23 min)`; PYTHON은 make 단계 1/3~3/3과 test 번호).
+
+**다른 노드에서 빌드해도 됩니다.** 경로(`/home/cupsoft/Products`)와 OS(AlmaLinux 9)가 같으면 결과가 같습니다. 빌드한 뒤
+서버의 같은 위치로 `rsync -a <prefix>/ cupsoft@192.168.0.150:<서버에서 symlink를 푼 prefix>/`로 복사하고, 그 뒤로는
+어느 쪽도 고치지 않습니다. 서버에서 `/home/cupsoft/Products`는 `/scratch/cupsoft/Products`를 가리키는 symlink이므로
+`/scratch/cupsoft/Products/<NAME>/<VERSION>/`로 줍니다. AlmaLinux 9의 rsync(3.2.7-1.el9_8)는 받는 쪽 경로에
+symlink가 있으면 "Too many levels of symbolic links"로 거부합니다(받아 오는 `prod sync`는 영향 없음). 서버의 실제
+경로는 `ssh cupsoft@192.168.0.150 readlink -f /home/cupsoft/Products`로 확인합니다. release는 서버에 있는 복사본으로 manifest를 만듭니다. 빌드한 노드를 recipe의 `notes`에 적어 둡니다.
+
 ### 5.2 저장소에 레시피 추가
 
 release하려면 그 버전의 **레시피**가 도구에 들어 있어야 합니다. 저장소에 추가합니다.
@@ -197,8 +211,19 @@ build: |
 notes: "자유롭게 적는 메모"
 ```
 
-- 도구가 검사하는 것은 `format`, `product`, `version`, `depends`뿐입니다. `source`, `build`, `notes`는 기록입니다.
-  `build`가 있으면 buildinfo에 "recipe로 빌드"라고 적힙니다.
+- 도구가 검사하는 것은 `format`, `product`, `version`, `depends`, `ldd_ignore`뿐입니다. `source`, `build`, `notes`는
+  기록입니다. `build`가 있으면 buildinfo에 "recipe로 빌드"라고 적힙니다.
+- `ldd_ignore`는 `prod doctor`의 ldd 점검에서 세지 않을 파일(버전 디렉토리 기준 glob)과 그 이유입니다. 필요할 때만
+  불러 쓰는 선택 부분만 적습니다. 예:
+
+  ```yaml
+  ldd_ignore:
+    - path: "lib/python3.14/site-packages/numba/np/ufunc/tbbpool.*.so"
+      reason: "numba's optional TBB threading layer; EL9 has no libtbb.so.12"
+  ```
+
+  pip wheel이 같은 디렉토리에 함께 넣은 라이브러리와 Qt의 plugin, QML 모듈(platform plugin 제외)은 적지 않아도
+  세지 않습니다. 이것들은 detail에 "not counted: …"로 개수만 나옵니다.
 - **새 product**(지금 없는 이름)라면 modulefile 원본도 만들어야 합니다([5.6절](#56-새-product의-modulefile-원본)).
   빌드 정보를 남기려면 `recipes/<NAME>/buildinfo.sh`도 만듭니다.
 

@@ -1,9 +1,13 @@
 """Build recipes `recipes/<NAME>/<VERSION>.yml` in the git repository.
 
-Only the fields the tool uses are validated (format, product, version, depends). Other fields
+Only the fields the tool uses are validated (format, product, version, depends, ldd_ignore). Other fields
 (source, build, notes) are free-form records for people.
+
+ldd_ignore lists files of the version (glob patterns relative to the version directory) whose missing shared
+libraries `prod doctor` does not count, each with the reason: optional parts that are loaded only on demand.
 """
 
+import fnmatch
 import os
 import re
 from dataclasses import dataclass, field
@@ -14,7 +18,7 @@ from .vlist import PRODUCT_RE, VERSION_RE
 from .yamlutil import check_format, load_mapping
 
 FORMAT = 1
-_KEYS = ("format", "product", "version", "depends", "source", "build", "notes")
+_KEYS = ("format", "product", "version", "depends", "source", "build", "notes", "ldd_ignore")
 
 # A suffix of an existing version name that names a dependency:
 #   ROOT V6.32.20_3.11.14     -> PYTHON V3.11.14
@@ -29,6 +33,11 @@ class Recipe:
     version: str
     depends: List[Tuple[str, str]] = field(default_factory=list)
     has_build: bool = False  # True if the version was built from this recipe (it has a 'build' field)
+    ldd_ignore: List[Tuple[str, str]] = field(default_factory=list)  # (glob pattern, reason)
+
+    def ldd_ignored(self, rel):
+        """The reason if the file `rel` (relative to the version directory) is in ldd_ignore, else None."""
+        return next((reason for pat, reason in self.ldd_ignore if fnmatch.fnmatchcase(rel, pat)), None)
 
 
 def path_of(recipes_root, product, version):
@@ -60,7 +69,24 @@ def loads(data, product, version):
         if any(n == d["name"] for n, _ in result):
             raise FormatError(f"{what}: depends on {d['name']} twice")
         result.append((d["name"], d["version"]))
-    return Recipe(product=product, version=version, depends=result, has_build="build" in doc)
+    return Recipe(product=product, version=version, depends=result, has_build="build" in doc,
+                  ldd_ignore=_ldd_ignore(doc.get("ldd_ignore", []), what))
+
+
+def _ldd_ignore(items, what):
+    if not isinstance(items, list):
+        raise FormatError(f"{what}: 'ldd_ignore' must be a list")
+    result = []
+    for i, d in enumerate(items, 1):
+        if not isinstance(d, dict) or set(d) != {"path", "reason"}:
+            raise FormatError(f"{what}: ldd_ignore[{i}] must have exactly 'path' and 'reason'")
+        pat, reason = d["path"], d["reason"]
+        if not isinstance(pat, str) or not pat or pat.startswith("/") or ".." in pat.split("/"):
+            raise FormatError(f"{what}: ldd_ignore[{i}]: 'path' must be a pattern relative to the version directory")
+        if not isinstance(reason, str) or not reason.strip():
+            raise FormatError(f"{what}: ldd_ignore[{i}]: 'reason' must say why")
+        result.append((pat, reason))
+    return result
 
 
 def load(recipes_root, product, version):

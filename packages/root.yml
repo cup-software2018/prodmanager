@@ -33,6 +33,10 @@ packages:
   - "libxml2-devel"
   - "gsl-devel"
   - "readline-devel"
+  # Needed to build ROOT 6.40 (TIFF in libAfterImage, the libcurl HTTP(S) I/O); the runtime libraries are in
+  # every AlmaLinux 9 installation.
+  - "libtiff-devel"
+  - "libcurl-devel"
 optional:
   # R bindings. R-Rcpp-devel and R-RInside-devel are not in the AlmaLinux 9 / EPEL repositories
   # (checked 2026-11-19); in the legacy postinstall.sh they made the whole line fail.

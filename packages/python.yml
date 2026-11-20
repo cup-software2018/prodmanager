@@ -21,4 +21,7 @@ packages:
   - "libnsl2-devel"
   - "xcb-util-cursor"
   - "gdbm-devel"
+  # Runtime libraries of packages in PYTHON: pyodbc (and the Qt ODBC driver) need unixODBC, QtNfc needs pcsc-lite.
+  - "unixODBC"
+  - "pcsc-lite-libs"
 optional: []

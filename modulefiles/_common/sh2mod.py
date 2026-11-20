@@ -10,6 +10,10 @@ Used by the `generate` scripts of products whose setup script depends on the ver
    - variables in DROP (macOS/AIX/HP-UX ones) and those given by the caller are dropped;
    - path-list variables (PATH, LD_LIBRARY_PATH, ...) become `prepend-path`, even when the script set
      them (in a clean environment a prepend looks like a set);
+   - the version directory reached through a symlink: Products is often a symlink to a bigger disk
+     (/home/cupsoft/Products -> /scratch/cupsoft/Products), and scripts like ROOT 6.40's thisroot.sh resolve
+     their own location physically. Such paths are written back under the prefix as given, which is the path
+     every node has;
    - path entries outside the version directory (system directories such as /usr/lib64) are dropped,
      except entries under the HOME placeholder;
    - the HOME placeholder becomes `$::env(HOME)`, so per-user values are decided at load time;
@@ -25,6 +29,7 @@ Used by the `generate` scripts of products whose setup script depends on the ver
 """
 
 import os
+import re
 import subprocess
 
 MODULECMD = "/usr/share/Modules/libexec/modulecmd.tcl"
@@ -89,11 +94,17 @@ def capture(prefix, script, args=(), drop=(), modulecmd=MODULECMD):
     prefix = prefix.rstrip("/")
     drop = DROP | set(drop)
     out, dropped = [], []
+    real = os.path.realpath(prefix)
+    real_re = re.compile(re.escape(real) + r"(?=/|:|\s|$)") if real != prefix else None
+
+    def unresolve(v):
+        return real_re.sub(lambda _: prefix, v) if real_re else v
 
     def keep_entry(v):
         return v == prefix or v.startswith(prefix + "/") or v.startswith(HOME_PLACEHOLDER)
 
     for kind, var, vals in capture_records(script, args, modulecmd):
+        vals = [unresolve(v) for v in vals]
         if var not in drop and any("\\" in v for v in vals):
             raise SystemExit(f"{script}: the value of {var} contains a backslash, which sh-to-mod does not quote "
                              f"faithfully; set {var} explicitly in template.tcl and drop it from the capture")

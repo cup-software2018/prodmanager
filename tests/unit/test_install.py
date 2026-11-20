@@ -3,6 +3,7 @@
 import os
 import shutil
 import subprocess
+import tempfile
 import unittest
 
 from prod import config, fsutil, state
@@ -349,16 +350,34 @@ class TestDoctorAndPostinstall(Installed):
         subprocess.run(["gcc", "-shared", "-fPIC", "-o", os.path.join(build, "libprodfoo.so"),
                         os.path.join(build, "foo.c")], check=True)
         self.version("HDF5", "V1.14.9", {"bin/h5dump": b"#!/bin/sh\n"})
-        subprocess.run(["gcc", "-o", os.path.join(self.products, "HDF5", "V1.14.9", "bin", "needsfoo"),
-                        os.path.join(build, "main.c"), "-L" + build, "-lprodfoo"], check=True)
+        vdir = os.path.join(self.products, "HDF5", "V1.14.9")
+        # the same program in places where its missing library is not counted: a Qt plugin (on demand), next to
+        # a bundled copy of the library (as pip wheels do), and a file the recipe lists in ldd_ignore
+        for rel in ("bin/needsfoo", "lib/Qt6/plugins/sqldrivers/libqsqlfoo.so", "lib/bundled/needsfoo",
+                    "lib/opt/needsfoo"):
+            os.makedirs(os.path.dirname(os.path.join(vdir, rel)), exist_ok=True)
+            subprocess.run(["gcc", "-o", os.path.join(vdir, rel), os.path.join(build, "main.c"), "-L" + build,
+                            "-lprodfoo"], check=True)
+        shutil.copy(os.path.join(build, "libprodfoo.so"), os.path.join(vdir, "lib", "bundled"))
         self.recipe("HDF5", "V1.14.9")
+        installed = os.path.join(self.cprod, ".prod", "current", "share", "recipes", "HDF5")
+        os.makedirs(installed, exist_ok=True)
+        mode = os.stat(installed).st_mode
+        os.chmod(installed, mode | 0o200)  # the installed tool is read-only
+        with open(os.path.join(installed, "V1.14.9.yml"), "w") as f:
+            f.write('format: "1"\nproduct: "HDF5"\nversion: "V1.14.9"\n'
+                    'ldd_ignore:\n  - {path: "lib/opt/*", reason: "optional test part"}\n')
+        os.chmod(installed, mode)
         self.draft("ldd", [("HDF5", "V1.14.9")])
         self.release("ldd")
         self.sync("ldd")
         r = self.run_prod("doctor", "ldd")
         self.assertEqual(r.returncode, 1, r.stdout)
-        self.assertIn("FAIL  ldd ldd          1 missing shared libraries in 1 ELF files", r.stdout)
+        self.assertIn("FAIL  ldd ldd          1 missing shared libraries in 5 ELF files", r.stdout)
         self.assertIn("HDF5/V1.14.9/bin/needsfoo: libprodfoo.so", r.stdout)
+        self.assertIn("not counted: 1 Qt plugin/QML files", r.stdout)
+        self.assertIn("not counted: 1 files in the recipe's ldd_ignore (optional test part)", r.stdout)
+        self.assertNotIn("bundled", r.stdout)
 
     def test_postinstall(self):
         r = self.postinstall("--check")
@@ -397,6 +416,38 @@ class TestDoctorAndPostinstall(Installed):
         if os.geteuid() != 0:
             self.assertEqual(r.returncode, 1)
             self.assertIn("run as root", r.stderr)
+
+
+class TestClassifyMissing(unittest.TestCase):
+    def test_classify(self):
+        from prod import recipe
+        from prod.doctor import classify_missing
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp)
+        v = os.path.join(tmp, "PYTHON", "V3")
+        sp = os.path.join(v, "lib", "site-packages")
+        os.makedirs(os.path.join(sp, "h5py.libs"))
+        open(os.path.join(sp, "h5py.libs", "libsz-1.so"), "w").close()
+        files = {
+            "bundled": (os.path.join(sp, "h5py.libs", "libhdf5-1.so"), "libsz-1.so"),
+            "sql plugin": (os.path.join(sp, "PySide6", "Qt", "plugins", "sqldrivers", "libqsqloci.so"), "libclntsh.so"),
+            "qml": (os.path.join(sp, "PyQt5", "Qt5", "qml", "QtGamepad", "libplugin.so"), "libQt5Gamepad.so.5"),
+            "platform plugin": (os.path.join(sp, "PyQt6", "Qt6", "plugins", "platforms", "libqxcb.so"),
+                                "libxcb-cursor.so.0"),
+            "ignored": (os.path.join(sp, "numba", "tbbpool.so"), "libtbb.so.12"),
+            "real": (os.path.join(sp, "pyodbc.so"), "libodbc.so.2"),
+        }
+        missing = list(files.values())
+        owner = {f: (v, ("PYTHON", "V3")) for f, _ in missing}
+        rec = recipe.Recipe("PYTHON", "V3", ldd_ignore=[("lib/site-packages/numba/tbbpool*.so", "optional TBB")])
+        real, on_demand, ignored = classify_missing(missing, owner, {("PYTHON", "V3"): rec})
+        self.assertEqual(real, [files["platform plugin"], files["real"]])
+        self.assertEqual(on_demand, {files["sql plugin"][0], files["qml"][0]})
+        self.assertEqual(ignored, {"optional TBB": {files["ignored"][0]}})
+        # without a recipe nothing is ignored
+        real, _, ignored = classify_missing(missing, owner, {})
+        self.assertIn(files["ignored"], real)
+        self.assertEqual(ignored, {})
 
 
 class TestParseLdd(unittest.TestCase):

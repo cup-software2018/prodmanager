@@ -5,19 +5,23 @@
   packages   the system packages needed by the installed vlists (rpm -q)
   record     whether postinstall.sh has applied the package lists of this tool version
   modules    `. setup_prod.sh <vlist>` loads the vlist in a clean shell
-  ldd        no ELF file of the vlist's versions misses a shared library, inside that environment
+  ldd        no ELF file of the vlist's versions misses a shared library, inside that environment. Not counted:
+             a library that lies next to the file (bundled by a pip wheel, loaded before it), Qt plugins and QML
+             modules (loaded only on demand; platform plugins still count), and files in the recipe's ldd_ignore
 
 For tests only: PROD_RPM replaces the rpm command.
 """
 
 import os
 import pwd
+import re
 import stat
 import subprocess
 from dataclasses import dataclass, field
 from typing import List
 
 from . import packages as packages_mod
+from . import recipe as recipe_mod
 from . import transfer
 from . import vlist as vlist_mod
 from .errors import EnvError, FormatError
@@ -25,6 +29,12 @@ from .verify import installed_vlists
 
 LDD_BATCH = 200
 MAX_SHOWN = 10
+
+# Qt plugins and QML modules of the Qt copies in pip wheels (PySide6/Qt, PyQt6/Qt6, PyQt5/Qt5) are loaded only when
+# a program asks for them, and many need libraries nobody installs (other databases, Wayland compositor, 3D, ...).
+# The platform plugins are what every GUI program loads, so they still count.
+_QT_ON_DEMAND_RE = re.compile(r"/Qt[56]?/(plugins|qml)/")
+_QT_REQUIRED_RE = re.compile(r"/Qt[56]?/plugins/(platforms|xcbglintegrations)/")
 
 
 @dataclass
@@ -36,6 +46,13 @@ class Check:
 
     def as_dict(self):
         return dict(self.__dict__)
+
+
+def _recipes_dir(tool_root):
+    for d in (os.path.join(tool_root, "share", "recipes"), os.path.join(tool_root, "recipes")):
+        if os.path.isdir(d):
+            return d
+    return None
 
 
 def _packages_dir(tool_root):
@@ -185,29 +202,70 @@ def parse_ldd(output, files):
     return result
 
 
-def check_vlist(paths, name, versions, home, run_ldd):
+def classify_missing(missing, owner, recipes):
+    """Split ldd's [(file, missing library)] into (real [(file, lib)], on-demand Qt files {file},
+    {reason: {file}} from the recipes' ldd_ignore). owner: {file: (version dir, (name, version))};
+    recipes: {(name, version): Recipe}. A library lying next to the file is not missing at all."""
+    real, on_demand, ignored = [], set(), {}
+    for f, lib in missing:
+        if os.path.exists(os.path.join(os.path.dirname(f), lib)):
+            continue
+        vdir, key = owner[f]
+        rel = os.path.relpath(f, vdir)
+        reason = recipes[key].ldd_ignored(rel) if key in recipes else None
+        if reason is not None:
+            ignored.setdefault(reason, set()).add(f)
+        elif _QT_ON_DEMAND_RE.search("/" + rel) and not _QT_REQUIRED_RE.search("/" + rel):
+            on_demand.add(f)
+        else:
+            real.append((f, lib))
+    return real, on_demand, ignored
+
+
+def _recipes_of(recipes_root, versions):
+    result = {}
+    for key in versions:
+        if recipes_root:
+            try:
+                result[key] = recipe_mod.load(recipes_root, *key)
+            except FormatError:
+                continue  # no recipe for this version in this tool: nothing is ignored
+    return result
+
+
+def check_vlist(paths, name, versions, home, run_ldd, recipes_root=None):
     env, err = vlist_environment(paths, name, home)
     if env is None:
         return [Check("fail", f"modules {name}", f"'. setup_prod.sh {name}' failed", err.splitlines()[-MAX_SHOWN:])]
     checks = [Check("ok", f"modules {name}", f"vlist {name} loads (PROD_VLIST={env.get('PROD_VLIST', '?')})")]
     if not run_ldd:
         return checks
-    files = []
+    files, owner = [], {}
     for pname, pver in versions:
-        files += elf_files(paths.version_dir(pname, pver))
+        vdir = paths.version_dir(pname, pver)
+        for f in elf_files(vdir):
+            files.append(f)
+            owner[f] = (vdir, (pname, pver))
     missing = []
     for i in range(0, len(files), LDD_BATCH):
         batch = files[i:i + LDD_BATCH]
         out = subprocess.run(["ldd"] + batch, env=env, capture_output=True, text=True, check=False)
         missing += parse_ldd(out.stdout, batch)
-    if missing:
-        details = [f"{os.path.relpath(f, paths.products)}: {lib}" for f, lib in missing[:MAX_SHOWN]]
-        if len(missing) > MAX_SHOWN:
-            details.append(f"... and {len(missing) - MAX_SHOWN} more")
-        checks.append(Check("fail", f"ldd {name}", f"{len(missing)} missing shared libraries in {len(files)} ELF files",
-                            details))
+    real, on_demand, ignored = classify_missing(missing, owner, _recipes_of(recipes_root, versions))
+    notes = []
+    if on_demand:
+        notes.append(f"not counted: {len(on_demand)} Qt plugin/QML files that need libraries not installed here "
+                     "(loaded only on demand)")
+    for reason, fs in sorted(ignored.items()):
+        notes.append(f"not counted: {len(fs)} files in the recipe's ldd_ignore ({reason})")
+    if real:
+        details = [f"{os.path.relpath(f, paths.products)}: {lib}" for f, lib in real[:MAX_SHOWN]]
+        if len(real) > MAX_SHOWN:
+            details.append(f"... and {len(real) - MAX_SHOWN} more")
+        checks.append(Check("fail", f"ldd {name}", f"{len(real)} missing shared libraries in {len(files)} ELF files",
+                            details + notes))
     else:
-        checks.append(Check("ok", f"ldd {name}", f"{len(files)} ELF files, no missing shared libraries"))
+        checks.append(Check("ok", f"ldd {name}", f"{len(files)} ELF files, no missing shared libraries", notes))
     return checks
 
 
@@ -216,6 +274,7 @@ def doctor(paths, cfg, names=None, *, tool_root, tool, run_ldd=True, home=None):
     rpm = os.environ.get("PROD_RPM", "rpm")
     names = list(names) if names else installed_vlists(paths)
     pkg_dir = _packages_dir(tool_root)
+    recipes_root = _recipes_dir(tool_root)
     checks = [check_tool(paths, cfg, tool, home)]
     server = check_server(cfg)
     if server:
@@ -226,5 +285,5 @@ def doctor(paths, cfg, names=None, *, tool_root, tool, run_ldd=True, home=None):
     if os.path.exists(paths.current):
         for name in names:
             _, versions = _vlist_products(paths, [name])
-            checks += check_vlist(paths, name, versions, home, run_ldd)
+            checks += check_vlist(paths, name, versions, home, run_ldd, recipes_root)
     return checks

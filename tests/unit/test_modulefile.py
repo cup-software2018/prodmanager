@@ -207,11 +207,27 @@ class TestRecipe(unittest.TestCase):
             "dep extra key": (good.replace(b'version: "V3.11.14"}', b'version: "V3.11.14", x: "y"}'),
                               "ROOT", "V6.32.20_3.11.14"),
             "self dep": (good.replace(b'name: "PYTHON"', b'name: "ROOT"'), "ROOT", "V6.32.20_3.11.14"),
+            "ldd_ignore not a list": (good + b'ldd_ignore: "lib/x.so"\n', "ROOT", "V6.32.20_3.11.14"),
+            "ldd_ignore no reason": (good + b'ldd_ignore:\n  - {path: "lib/x.so"}\n', "ROOT", "V6.32.20_3.11.14"),
+            "ldd_ignore empty reason": (good + b'ldd_ignore:\n  - {path: "lib/x.so", reason: " "}\n', "ROOT",
+                                        "V6.32.20_3.11.14"),
+            "ldd_ignore absolute": (good + b'ldd_ignore:\n  - {path: "/lib/x.so", reason: "r"}\n', "ROOT",
+                                    "V6.32.20_3.11.14"),
+            "ldd_ignore outside": (good + b'ldd_ignore:\n  - {path: "../x.so", reason: "r"}\n', "ROOT",
+                                   "V6.32.20_3.11.14"),
         }
         for label, (data, name, version) in cases.items():
             with self.subTest(label):
                 with self.assertRaises(FormatError):
                     recipe.loads(data, name, version)
+
+    def test_ldd_ignore(self):
+        r = recipe.loads(ROOT_RECIPE + b'ldd_ignore:\n  - {path: "lib/opt/*.so", reason: "optional part"}\n',
+                         "ROOT", "V6.32.20_3.11.14")
+        self.assertEqual(r.ldd_ignore, [("lib/opt/*.so", "optional part")])
+        self.assertEqual(r.ldd_ignored("lib/opt/libx.so"), "optional part")
+        self.assertIsNone(r.ldd_ignored("lib/libx.so"))
+        self.assertEqual(recipe.loads(ROOT_RECIPE, "ROOT", "V6.32.20_3.11.14").ldd_ignore, [])
 
     def test_depends_from_suffix(self):
         self.assertEqual(recipe.depends_from_suffix("V6.32.20_3.11.14"), [("PYTHON", "V3.11.14")])

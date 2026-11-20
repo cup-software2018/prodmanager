@@ -1,0 +1,16 @@
+format: "1"
+product: "PYTHON"
+version: "V3.14.9"
+source:
+  url: "https://www.python.org/ftp/python/3.14.9/Python-3.14.9.tar.xz"
+build: |
+  recipes/PYTHON/build.sh 3.14.9
+    configure --prefix=/home/cupsoft/Products/PYTHON/V3.14.9 --libdir=<prefix>/lib --enable-shared
+              --enable-optimizations --with-ensurepip=install --with-system-libmpdec=no
+              LDFLAGS="-L<prefix>/lib -Wl,-rpath,<prefix>/lib"
+    make; make install
+    pip install --prefer-binary -r recipes/PYTHON/V3.14.9.requirements.txt
+ldd_ignore:
+  - path: "lib/python3.14/site-packages/numba/np/ufunc/tbbpool.*.so"
+    reason: "numba's optional TBB threading layer; EL9 has no libtbb.so.12, numba then uses OpenMP or workqueue"
+notes: "Package set: Anaconda Distribution 2026.07-1 (pip equivalents, no MKL/MPI) plus lxml, opencv-python, pyinstaller, pyqtgraph, qt-material from V3.11.14 and influxdb-client, reactivex. Built on cupdev1 (AlmaLinux 9.9) at the final path and copied to the server with rsync -a."
