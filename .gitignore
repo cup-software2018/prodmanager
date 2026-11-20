@@ -1,6 +1,13 @@
+# Python
 __pycache__/
 *.pyc
+
+# Editors
+.vscode/
 .lh/
+*~
+*.swp
+
 # Design documents are kept outside the repository.
 DESIGN.md
 DESIGN_NOTES.md

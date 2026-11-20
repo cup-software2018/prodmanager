@@ -51,7 +51,7 @@ class TestRealSources(unittest.TestCase):
                     for d, _ in r.depends:
                         modulefile.load_source(SRC, d)
                     count += 1
-        self.assertEqual(count, 12)
+        self.assertEqual(count, 14)
 
     def test_legacy_vlists_satisfy_dependency_order(self):
         """What prod release --migrate will check, before touching the server."""

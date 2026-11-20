@@ -1,170 +1,168 @@
-# client 매뉴얼
+# Client manual
 
-products를 받아 쓰는 노드(client)를 위한 문서입니다. 앞부분은 **사용자**(환경 설정만 하는 사람), 뒷부분은 **노드
-관리자**(cupsoft 계정으로 노드를 준비하고 products를 설치하는 사람)를 위한 것입니다. 서버 쪽은
-[서버 매뉴얼](manual-server.md)을 보세요.
+For the nodes that use products. Sections 1–3 are for **users** (who only set up their environment). Sections 4–10
+are for **node admins** (who prepare the node and install products, as cupsoft). For the server, see the
+[server manual](manual-server.md).
 
-> 이 문서의 명령은 구현과 샌드박스 시험을 마친 것이지만, 실제 노드에는 아직 적용하지 않았습니다.
+## Contents
 
-## 목차
+**Users**
 
-**사용자**
+1. [Set up the environment](#1-set-up-the-environment)
+2. [In scripts](#2-in-scripts)
+3. [Using module directly](#3-using-module-directly), [Adding Python packages (pip)](#31-adding-python-packages-pip)
 
-1. [환경 설정](#1-환경-설정)
-2. [스크립트에서 쓰기](#2-스크립트에서-쓰기)
-3. [module 명령으로 직접 쓰기](#3-module-명령으로-직접-쓰기), [Python 패키지 추가 (pip)](#31-python-패키지-추가-pip)
+**Node admins**
 
-**노드 관리자**
-
-4. [새 노드 준비](#4-새-노드-준비)
-5. [vlist 설치와 갱신](#5-vlist-설치와-갱신)
-6. [점검과 복구](#6-점검과-복구)
-7. [vlist 빼기와 정리](#7-vlist-빼기와-정리)
-8. [도구 업그레이드와 되돌리기](#8-도구-업그레이드와-되돌리기)
-9. [기존 체계에서 옮기기](#9-기존-체계에서-옮기기)
-10. [문제 해결](#10-문제-해결)
+4. [Prepare a new node](#4-prepare-a-new-node)
+5. [Install and update vlists](#5-install-and-update-vlists)
+6. [Check and repair](#6-check-and-repair)
+7. [Remove vlists and clean up](#7-remove-vlists-and-clean-up)
+8. [Upgrade and roll back the tool](#8-upgrade-and-roll-back-the-tool)
+9. [Moving a node from the old system](#9-moving-a-node-from-the-old-system)
+10. [Troubleshooting](#10-troubleshooting)
 
 ---
 
-# 사용자
+# Users
 
-## 1. 환경 설정
+## 1. Set up the environment
 
-기존과 같습니다.
+Same as before:
 
 ```bash
-. ~/setup_prod.sh 3.1                    # cupsoft 계정
-. /home/cupsoft/setup_prod.sh 3.1        # 다른 계정 (예: amore2)
-source /home/cupsoft/setup_prod.csh 3.1  # csh/tcsh
+. ~/setup_prod.sh 4.0                    # as cupsoft
+. /home/cupsoft/setup_prod.sh 4.0        # other accounts (e.g. amore2)
+source /home/cupsoft/setup_prod.csh 4.0  # csh/tcsh
 ```
 
-- 인자 없이 실행하면 이 노드에 설치된 vlist 목록을 보여 줍니다.
-- 다른 vlist를 source하면 **앞의 vlist가 깨끗이 빠지고** 새 vlist로 바뀝니다. 같은 것을 여러 번 source해도 PATH 등이
-  중복되지 않습니다.
-- 대화식 셸에서는 한 줄 요약을 보여 줍니다:
+- With no argument it lists the vlists installed on this node.
+- Sourcing another vlist **cleanly replaces** the previous one. Sourcing the same one twice adds nothing twice to
+  `PATH`.
+- In an interactive shell it prints one summary line:
 
   ```
-  prod: vlist 3.1: PYTHON/V3.11.14 ROOT/V6.32.20_3.11.14 HDF5/V1.14.2 GEANT4/V11.1.3 CAENHVWRAPPER/V6.6
+  prod: vlist 4.0: PYTHON/V3.14.9 ROOT/V6.40.04_3.14.9 HDF5/V2.2.0 GEANT4/V11.4.3
   ```
 
-- 철회된 vlist면 경고와 대신 쓸 vlist를 보여 줍니다(load는 합니다):
+- A withdrawn vlist still loads, with a warning and the vlist to use instead:
 
   ```
   prod: warning: vlist 3.0 was withdrawn: "HDF5 1.14.1 is too old"
   prod: warning: use "3.1" instead
   ```
 
-- 이 노드에 없는 vlist면 `prod: vlist '3.2' is not installed on this node; run 'prod sync 3.2'`가 나옵니다. 노드
-  관리자에게 설치를 부탁하세요.
-- 기존처럼 `PRODUCTS_DIR`(= `/home/cupsoft/Products`)도 설정됩니다.
+- If the vlist is not on this node you get `prod: vlist '4.1' is not installed on this node; run 'prod sync 4.1'`.
+  Ask the node admin.
+- `PRODUCTS_DIR` (= `/home/cupsoft/Products`) is set, as before.
 
-달라진 점: 환경은 environment-modules로 설정되므로 `module list`로 무엇이 load되었는지 볼 수 있습니다. 경로 중복이나
-이전 버전의 경로가 남던 문제는 없어졌습니다.
+What is new: environment-modules sets up the environment, so `module list` shows what is loaded. Duplicate paths
+and paths left over from a previous vlist are gone.
 
-## 2. 스크립트에서 쓰기
+## 2. In scripts
 
 ```bash
 #!/bin/bash
 set -eu
-. /home/cupsoft/setup_prod.sh 3.1        # 실패하면 여기서 멈춤 (set -e)
+. /home/cupsoft/setup_prod.sh 4.0        # stops here if it fails (set -e)
 root -b -q analysis.C
 ```
 
-- 비대화식 셸에서는 **아무것도 출력하지 않습니다**(오류와 경고만).
-- `set -e`, `set -u`를 켠 스크립트에서도 안전합니다. 실패하면 0이 아닌 값을 돌려줍니다.
-- `module` 명령이 없는 셸(cron, ssh로 실행한 명령 등)에서도 스스로 environment-modules를 초기화합니다.
+- In a non-interactive shell it prints nothing except errors and warnings.
+- Safe with `set -e` and `set -u`. Returns non-zero on failure.
+- Works where the `module` command is not set up (cron, commands run over ssh, ...).
 
-## 3. module 명령으로 직접 쓰기
+## 3. Using module directly
 
 ```bash
 module use /home/cupsoft/Products/modulefiles
-module avail                             # vlist/3.1, ROOT/V6.32.20_3.11.14, ...
-module load vlist/3.1                    # setup_prod.sh 3.1과 같음
-module load ROOT/V6.32.20_3.11.14        # product 하나만 (필요한 PYTHON도 자동으로 load)
+module avail                             # vlist/4.0, ROOT/V6.40.04_3.14.9, ...
+module load vlist/4.0                    # same as setup_prod.sh 4.0
+module load ROOT/V6.40.04_3.14.9         # one product (loads the PYTHON it needs too)
 module switch vlist vlist/daq_2.1
-module unload ROOT                       # 자동으로 load된 PYTHON도 함께 내려감
+module unload ROOT                       # also unloads the PYTHON it loaded
 ```
 
-한 product는 한 버전만 load됩니다. 다른 버전의 PYTHON이 load된 상태에서 ROOT를 load하면 "needs PYTHON V3.11.14,
-but another PYTHON is loaded"로 거부됩니다.
+Only one version of a product can be loaded. Loading ROOT while another PYTHON is loaded fails with "needs PYTHON
+V3.14.9, but another PYTHON is loaded".
 
-## 3.1 Python 패키지 추가 (pip)
+## 3.1 Adding Python packages (pip)
 
-products의 PYTHON은 읽기 전용이라 그 안에는 패키지를 설치할 수 없습니다. 대신 두 가지 방법이 있습니다.
+The products' PYTHON is read-only, so you cannot install into it. Install into your home instead:
 
 ```bash
-. ~/setup_prod.sh 3.1
-pip install iminuit                      # 자동으로 사용자 설치(~/.local/lib/python3.11/)가 됨
+. ~/setup_prod.sh 4.0
+pip install iminuit                      # goes to ~/.local/lib/python3.14/ automatically
 ```
 
-pip는 site-packages에 쓸 수 없으면 "Defaulting to user installation because normal site-packages is not writeable"이라고
-알리고 **그 사용자의 홈에** 설치합니다(`pip install --user`와 같음). 그 사용자에게만 보이고, products는 바뀌지 않습니다.
+pip says "Defaulting to user installation because normal site-packages is not writeable" and installs into **your
+home** (same as `pip install --user`). Only you see it; products don't change.
 
-작업마다 패키지를 따로 두려면 venv를 씁니다. products의 패키지(numpy, ROOT의 Python 바인딩 등)는 그대로 보입니다.
+For a separate set of packages per project, use a venv. It still sees the products' packages (numpy, ROOT's Python
+bindings, ...):
 
 ```bash
-. ~/setup_prod.sh 3.1
+. ~/setup_prod.sh 4.0
 python3 -m venv --system-site-packages ~/venvs/myana
 . ~/venvs/myana/bin/activate
 pip install iminuit
 ```
 
-**모든 사용자나 DAQ 같은 공용 작업에 필요한 패키지**는 노드마다 설치하지 말고 서버 관리자에게 요청하세요. 그 패키지를
-넣은 새 PYTHON 버전을 서버에서 release합니다.
+**Packages that everyone or the DAQ needs:** don't install them per node. Ask the server admin; they go into a new
+PYTHON version and a new vlist.
 
 ---
 
-# 노드 관리자
+# Node admins
 
-모두 **cupsoft 계정**으로 합니다(4.1의 root 작업 제외). `prod`는 노드마다 그 노드에서 직접 실행합니다. 여러 노드에
-한꺼번에 설치하는 기능은 두지 않습니다.
+Everything is done as **cupsoft**, except the root steps (4.1 and 4.4). Run `prod` on each node itself; there is no
+way to install on many nodes at once.
 
-## 4. 새 노드 준비
+## 4. Prepare a new node
 
-### 4.1 root가 할 일
+### 4.1 As root
 
-1. `cupsoft` 계정을 만듭니다.
-2. `/home/cupsoft/Products`를 준비합니다. 큰 로컬 디스크에 두려면 symlink로 만듭니다(경로
-   `/home/cupsoft/Products`가 그대로 보이기만 하면 됩니다):
+1. Create the `cupsoft` account.
+2. Create `/home/cupsoft/Products`. To put it on a big local disk, use a symlink (only the path
+   `/home/cupsoft/Products` matters):
 
    ```bash
    mkdir -p /scratch/cupsoft/Products && chown cupsoft: /scratch/cupsoft/Products
    ln -s /scratch/cupsoft/Products /home/cupsoft/Products
    ```
 
-3. 시스템 패키지: 도구를 설치한 뒤(4.3) `postinstall.sh`를 실행합니다. 도구 설치에 필요한 최소 패키지가 없으면 먼저
-   설치합니다:
+3. Install what the tool itself needs (the rest comes with `postinstall.sh` in 4.4):
 
    ```bash
    dnf install environment-modules rsync openssh-clients python3 python3-pyyaml git
    ```
 
-### 4.2 서버 접속
+### 4.2 Server access
 
-client는 서버에 **비밀번호 없이** ssh로 접속할 수 있어야 합니다.
+The node must reach the server by ssh **without a password**:
 
 ```bash
 ssh -o BatchMode=yes cupsoft@192.168.0.150 true && echo ok
 ```
 
-안 되면 cupsoft의 ssh 키를 서버의 `~cupsoft/.ssh/authorized_keys`에 등록합니다.
+If not, add cupsoft's ssh key to `~cupsoft/.ssh/authorized_keys` on the server.
 
-### 4.3 도구 설치
+### 4.3 Install the tool
 
 ```bash
-git clone https://github.com/cup-software2018/prodmanager.git ~/Devs/prodmanager   # 위치는 아무 곳이나
+git clone https://github.com/cup-software2018/prodmanager.git ~/Devs/prodmanager   # any place
 cd ~/Devs/prodmanager && git checkout vX.Y
 ./install.sh --role client --server cupsoft@192.168.0.150:/home/cupsoft/Products
 ```
 
-- 도구가 `/home/cupsoft/Products/.prod/`에 설치되고, `~/setup_prod.sh`, `~/setup_prod.csh`, `~/.local/bin/prod`가
-  생깁니다. 기존의 실제 `~/setup_prod.sh`는 `~/setup_prod.sh.pre-prod`로 옮겨집니다.
-- 설정은 `/home/cupsoft/Products/.prod/etc/prod.conf`에 있습니다. 서버를 바꿀 때만 고칩니다.
-- 끝에 `prod doctor --quick` 결과가 나옵니다.
+- The tool goes to `/home/cupsoft/Products/.prod/`, and `~/setup_prod.sh`, `~/setup_prod.csh` and
+  `~/.local/bin/prod` are linked to it. An old real `~/setup_prod.sh` is moved to `~/setup_prod.sh.pre-prod`.
+- Settings are in `/home/cupsoft/Products/.prod/etc/prod.conf`. Change them only to change the server.
+- It ends with `prod doctor --quick`.
 
-**시험용 설치.** 실제 Products를 건드리지 않고 다른 곳에 설치해 볼 수 있습니다. `--products`가 `~/Products`가
-아니면 install.sh는 HOME의 파일(`~/setup_prod.sh` 등)을 **건드리지 않으므로**, 그 노드의 기존 환경은 그대로입니다.
-도구는 경로로 직접 실행합니다.
+**Test install.** You can install somewhere else without touching the real Products. When `--products` is not
+`~/Products`, install.sh **leaves `$HOME` alone**, so the node's current setup does not change. Run the tool by its
+path:
 
 ```bash
 T=/scratch/cupsoft/prodtest && mkdir -p $T/Products
@@ -173,196 +171,196 @@ $T/Products/.prod/current/bin/prod sync daq_2.1
 . $T/Products/.prod/current/share/setup_prod.sh daq_2.1
 ```
 
-고정 modulefile 안의 경로는 `/home/cupsoft/Products/...`이므로, 시험용 설치에서 환경을 설정하면 그 노드의
-`/home/cupsoft/Products`에 있는 바이너리를 씁니다. 받기와 검증(sync, verify)을 시험하는 용도입니다. 지울 때는
-`chmod -R u+w $T && rm -rf $T`.
+The fixed modulefiles point to `/home/cupsoft/Products/...`, so the environment still uses the binaries there. A
+test install is for trying sync and verify. Remove it with `chmod -R u+w $T && rm -rf $T`.
 
-### 4.4 시스템 패키지 (root)
+### 4.4 System packages (root)
 
 ```bash
-sudo /home/cupsoft/Products/.prod/current/share/postinstall.sh --check
+sudo /home/cupsoft/Products/.prod/current/share/postinstall.sh --check   # only show what is missing
 sudo /home/cupsoft/Products/.prod/current/share/postinstall.sh
 ```
 
-자세한 것은 [서버 매뉴얼 4장](manual-server.md#4-시스템-패키지)과 같습니다. 필수 패키지가 실패하면 종료 코드 1이고,
-`prod doctor`가 빠진 것을 보여 줍니다.
+Details are in [server manual 4](manual-server.md#4-system-packages). Exit code 1 if a required package failed;
+`prod doctor` shows what is missing.
 
-## 5. vlist 설치와 갱신
+## 5. Install and update vlists
 
 ```bash
-prod list --remote               # 서버에 있는 vlist 목록
-prod sync 3.1 daq_2.1            # 설치 (여러 개 가능)
-prod sync 3.1 --dry-run          # 무엇을 받을지만 봄
-prod sync --installed            # 이 노드의 모든 vlist를 서버 상태로 다시 맞춤 (복구)
+prod list --remote               # vlists on the server
+prod sync 4.0 daq_2.1            # install (one or more)
+prod sync 4.0 --dry-run          # only show what would be transferred
+prod sync --installed            # bring every vlist on this node back to the server's state (repair)
 ```
 
-출력 예:
+Example output:
 
 ```
-sync 3.1 sha256:… (first sync)
-  PYTHON           V3.11.14                 transferred
-  ROOT             V6.32.20_3.11.14         transferred
-  HDF5             V1.14.2                  in place
-  GEANT4           V11.1.3                  transferred
-  CAENHVWRAPPER    V6.6                     transferred
+sync 4.0 sha256:… (first sync)
+  PYTHON           V3.14.9                  transferred
+  ROOT             V6.40.04_3.14.9          transferred
+  HDF5             V2.2.0                   transferred
+  GEANT4           V11.4.3                  in place
   done in 41.3 s
 ```
 
-sync가 하는 일:
+What `prod sync` does:
 
-- 서버의 vlist를 받아, **처음 받을 때의 해시를 기록**해 둡니다. 다음부터는 서버의 vlist가 그때와 다르면 멈춥니다
-  (release된 vlist는 바뀌면 안 되므로).
-- 이미 맞는 버전은 건드리지 않습니다(`in place`). 다르거나 없는 버전만 받습니다. 바뀌지 않은 파일은 재사용하므로
-  고칠 때 전송량이 적습니다.
-- 받은 것을 sha256으로 전부 확인하고 잠근 뒤(`a-w`) 제자리에 놓습니다. 실행 중인 프로그램은 깨지지 않습니다.
-- vlist 파일은 맨 마지막에 놓습니다. `setup_prod.sh`로 보이는 vlist는 필요한 것이 모두 준비된 것입니다.
-- 중간에 끊겨도(네트워크 등) 다시 실행하면 이어서 받습니다.
+- On the first sync it **records the hash of the server's vlist**. Later it stops if the server's vlist differs
+  (a released vlist must never change).
+- Versions that are already right are left alone (`in place`). Only missing or different ones are transferred;
+  unchanged files are reused, so repairs are small.
+- It checks everything with sha256, locks it (`a-w`) and only then moves it into place. Running programs don't
+  break.
+- The vlist file is written last. A vlist that `setup_prod.sh` shows is complete.
+- If it is interrupted (network, ...), run it again; it continues.
 
-**진행 상황**은 stderr에 버전마다 한 줄씩 나옵니다(`transferring … entries, 2.6 GB ...` → `verifying ...` →
-`transferred and verified (2.6 GB, 1m12s)`). 터미널에서 실행하면 받는 동안 rsync의 진행률(%, 속도, 남은 시간)도
-한 줄로 보입니다. 위의 요약은 stdout이라, 로그로 남길 때는 `prod sync 3.1 2>&1 | tee sync.log`처럼 둘 다 받습니다.
-`prod -q sync …`는 진행 줄과 요약을 모두 끕니다(오류만 출력). `prod verify`도 버전마다 진행 줄을 보여 줍니다.
+Progress goes to stderr, one line per version (`transferring … entries, 2.6 GB ...` → `verifying ...` →
+`transferred and verified (2.6 GB, 1m12s)`); in a terminal, rsync's progress is shown too. The summary goes to
+stdout. To log both: `prod sync 4.0 2>&1 | tee sync.log`. `prod -q sync …` prints only errors.
 
-## 6. 점검과 복구
-
-```bash
-prod verify                      # 이 노드의 모든 vlist를 manifest와 비교 (서버 접속 없음)
-prod verify 3.1 --quick          # 내용 해시 없이 빠르게
-prod verify --remote             # 서버의 vlist가 처음 받았을 때와 같은지도 확인
-prod verify --fix-perms          # 쓰기 권한이 켜진 것을 다시 잠금
-prod doctor                      # 도구, 서버 접속, 시스템 패키지, module load, 빠진 공유 라이브러리(ldd)
-prod list                        # vlist, 버전과 쓰는 vlist, 관리 밖의 파일
-```
-
-`prod doctor`의 ldd 점검은 vlist의 모든 실행 파일과 라이브러리가 필요한 공유 라이브러리를 찾는지 봅니다. 다음은 세지
-않고 "not counted: …"로 개수만 보여 줍니다: pip wheel이 같은 디렉토리에 함께 넣은 라이브러리(실제로는 찾음), Qt의
-plugin과 QML 모듈(쓸 때만 불러옴; 화면을 띄우는 platform plugin은 셈), recipe의 `ldd_ignore`에 적힌 선택 부분.
-FAIL이면 빠진 라이브러리는 대개 시스템 패키지이므로 `postinstall.sh`를 다시 실행합니다(4.4절).
-
-`prod verify` 출력의 해시(`sha256:…`)를 노드끼리 비교하면 같은 release를 쓰는지 알 수 있습니다.
-`prod --json verify`(`list`, `doctor`도 같음)는 결과를 JSON으로 출력합니다. 스크립트로 결과를 읽을 때 씁니다.
-
-### 설치본이 망가졌을 때
-
-```
-3.1          1 problem(s)   sha256:…
-  error:   ROOT V6.32.20_3.11.14: lib/libCore.so: content differs
-```
+## 6. Check and repair
 
 ```bash
-prod sync --installed            # 서버 상태로 되돌림
+prod verify                      # every vlist on this node against its manifests (no server access)
+prod verify 4.0 --quick          # fast: no content hashes
+prod verify --remote             # also check that the server's vlists are unchanged since the first sync
+prod verify --fix-perms          # re-lock anything that became writable
+prod doctor                      # tool, server access, system packages, module load, missing shared libraries (ldd)
+prod list                        # vlists, versions and who uses them, unmanaged files
+```
+
+`prod doctor` checks that every program and library in the vlists finds its shared libraries. It does not count
+(it only shows "not counted: …"): libraries a pip wheel ships next to itself, Qt plugins and QML modules (loaded only
+when used; platform plugins are counted), and files in a recipe's `ldd_ignore`. On FAIL, the missing library is
+usually a system package: run `postinstall.sh` again (4.4).
+
+Compare the hashes (`sha256:…`) in `prod verify` output between nodes to see that they use the same release.
+`prod --json verify` (also `list` and `doctor`) prints JSON for scripts.
+
+### A broken installation
+
+```
+4.0          1 problem(s)   sha256:…
+  error:   ROOT V6.40.04_3.14.9: lib/libCore.so: content differs
+```
+
+```bash
+prod sync --installed            # restore from the server
 prod verify
 ```
 
-설치본은 잠겨 있으니 직접 고치지 마세요. 시험하려면 다른 곳에 복사해서 하세요.
+Installed files are locked; don't edit them. To experiment, copy them somewhere else.
 
-### 서버의 vlist가 바뀌었다고 할 때
+### "The server's vlist differs"
 
 ```
-prod: the server's vlist '3.1' differs from the one first synced on this node
+prod: the server's vlist '4.0' differs from the one first synced on this node
 ```
 
-release된 vlist는 바뀌면 안 됩니다. **서버 관리자에게 알리세요.** 관리자가 의도한 변경이라고 확인해 주면:
+A released vlist must never change. **Tell the server admin.** Only if they confirm the change was intended:
 
 ```bash
-prod sync --retrust 3.1          # 새 해시를 기록하고 진행 (history에 남음)
+prod sync --retrust 4.0          # record the new hash and continue (logged in history)
 ```
 
-### 서버의 바이트가 다르다고 할 때
+### "The server's files differ from the manifest"
 
 ```
 prod: ROOT V…: the server's files differ from the manifest even after a full re-transfer (…);
       the products server needs to be checked
 ```
 
-서버에서 release된 파일이 바뀌었다는 뜻입니다. 이 노드에는 아무것도 바뀌지 않았습니다. 서버 관리자에게 알리세요.
+Released files changed on the server. Nothing changed on this node. Tell the server admin.
 
-### 철회된 vlist
+### A withdrawn vlist
 
 ```
 prod: vlist '3.0' was withdrawn: HDF5 1.14.1 is too old; use 3.1 instead (--force installs it anyway)
 ```
 
-대체 vlist를 쓰세요. 꼭 필요하면 `prod sync --force 3.0`.
+Use the replacement. If you really need it: `prod sync --force 3.0`.
 
-## 7. vlist 빼기와 정리
+## 7. Remove vlists and clean up
 
 ```bash
-prod remove 3.0                  # 이 노드에서 vlist를 뺌 (버전 디렉토리는 아직 남음)
-prod gc                          # 어떤 vlist도 쓰지 않는 버전 등 지울 것 목록만 보여 줌
-prod gc --yes                    # 실제로 지움
+prod remove 4.0                  # remove the vlist from this node (its versions stay for now)
+prod gc                          # list what is no longer used by any vlist
+prod gc --yes                    # delete it
 ```
 
-- `gc`는 `prod`가 관리하는 것만 지웁니다. 기존 체계의 파일(`setup_ROOT.sh`, `CERNLIB.tgz` 등)은 절대 지우지 않습니다.
-- 뺀 vlist를 나중에 다시 sync하면 처음 받았을 때의 해시와 비교합니다.
+- `gc` deletes only what `prod` manages. It never deletes old-system files (`setup_ROOT.sh`, `CERNLIB.tgz`, ...).
+- If you sync a removed vlist again, it is compared with the hash from its first sync.
 
-## 8. 도구 업그레이드와 되돌리기
+## 8. Upgrade and roll back the tool
 
 ```bash
 cd ~/Devs/prodmanager && git fetch --tags && git checkout vX.Y
-./install.sh                     # prod.conf와 기록은 그대로 남음
+./install.sh                     # prod.conf and history stay
 prod --version
+sudo /home/cupsoft/Products/.prod/current/share/postinstall.sh --check   # as root
 ```
 
-되돌리기:
+- **If the new tag changed `packages/`, run `postinstall.sh` (4.4).** `--check` shows whether anything is missing.
+  For example, v1.0 added `xerces-c`, `unixODBC`, `pcsc-lite-libs`, `libtiff-devel` and `libcurl-devel`.
+- Installed vlists don't change: their modulefiles were fixed at release.
+- If `prod` says "format N is newer than this tool supports", upgrade the tool.
+
+Roll back:
 
 ```bash
-ls /home/cupsoft/Products/.prod/versions/          # 남아 있는 버전 (최근 3개)
-ln -sfn versions/v0.1 /home/cupsoft/Products/.prod/current.tmp
+ls /home/cupsoft/Products/.prod/versions/          # kept versions (newest 3)
+ln -sfn versions/v0.4 /home/cupsoft/Products/.prod/current.tmp
 mv -T /home/cupsoft/Products/.prod/current.tmp /home/cupsoft/Products/.prod/current
 ```
 
-도구를 업그레이드해도 이미 설치한 vlist의 환경은 바뀌지 않습니다(modulefile이 release 때 고정되므로).
-`prod`가 "format N is newer than this tool supports"라고 하면 도구를 업그레이드하세요.
+## 9. Moving a node from the old system
 
-## 9. 기존 체계에서 옮기기
+For nodes that installed products with `install_products.sh`:
 
-이미 `install_products.sh`로 products를 받아 쓰던 노드입니다.
+1. **Check first** which vlists and scripts this node uses. If someone edited an old vlist file on the node itself
+   (for example `3.0` on cupdev1), the server's version replaces it, so fix the scripts that use it first.
+2. Install the tool (4.3) and the system packages (4.4).
+3. `prod sync <the vlists you use>`. Existing version directories are reused; only differences from the server are
+   fixed (files Python created, like `__pycache__`, are removed).
+4. Run `prod verify`, `prod doctor`, and your real scripts once.
 
-1. **먼저 확인**: 이 노드에서 쓰는 vlist와 스크립트. 특히 기존 vlist 파일을 노드에서 직접 고쳐 쓰던 경우(예: cupdev1의
-   `3.0`)는 새 체계에서 서버의 내용으로 바뀌므로, 그 vlist를 쓰는 스크립트를 먼저 정리해야 합니다.
-2. 도구 설치(4.3)와 시스템 패키지(4.4).
-3. `prod sync <쓰는 vlist들>`. 기존에 받아 둔 버전 디렉토리는 재사용되고, 서버와 다른 부분만 고쳐집니다(파이썬이
-   만든 `__pycache__` 등은 지워짐).
-4. `prod verify`, `prod doctor`, 그리고 실제 작업 스크립트를 한 번씩 돌려 봅니다.
+To go back: `mv ~/setup_prod.sh.pre-prod ~/setup_prod.sh`. Old files (`vlist/*.vlist`, `setup_<NAME>.sh`) were not
+deleted, so the old system still works.
 
-되돌리기: `mv ~/setup_prod.sh.pre-prod ~/setup_prod.sh`. 기존 파일(`vlist/*.vlist`, `setup_<NAME>.sh`)은 지우지 않았으므로
-기존 방식이 그대로 동작합니다.
+On a moved node, **don't run `install_products.sh` again.** It copies the server's old `~/setup_prod.sh` over the
+new one. To keep using the old system on a node, install with `--keep-legacy-setup` (keeps the old
+`~/setup_prod.sh`) and use the new one as `. /home/cupsoft/Products/.prod/current/share/setup_prod.sh <vlist>`.
 
-옮긴 노드에서는 **기존 `install_products.sh`를 더 이상 실행하지 마세요.** 그 스크립트는 서버의 기존
-`~/setup_prod.sh`를 받아 와 새 것을 덮어쓰려 합니다. 기존 방식을 계속 쓰려면 `--keep-legacy-setup`으로 설치해
-`~/setup_prod.sh`를 기존 것으로 두고, 새 방식은 `. /home/cupsoft/Products/.prod/current/share/setup_prod.sh <vlist>`로
-씁니다.
+## 10. Troubleshooting
 
-## 10. 문제 해결
+### Exit codes
 
-### 종료 코드
-
-| 코드 | 뜻 |
+| Code | Meaning |
 |---|---|
-| 0 | 성공 |
-| 1 | 검사에서 문제를 찾음 (verify 실패, 해시 불일치, 철회됨, doctor FAIL 등) |
-| 2 | 사용법 오류 |
-| 3 | 환경 오류 (설정 없음, role 불일치, 서버 접속 실패) |
-| 4 | 다른 `prod`가 실행 중 → 끝난 뒤 다시 |
-| 5 | 도구가 모르는 파일 형식 → 도구 업그레이드 |
+| 0 | Success |
+| 1 | A check found problems (verify failed, hash mismatch, withdrawn, doctor FAIL, ...) |
+| 2 | Usage error |
+| 3 | Environment error (no configuration, wrong role, cannot reach the server) |
+| 4 | Another `prod` is running → try again when it ends |
+| 5 | A file format this tool does not know → upgrade the tool |
 
-### 자주 보는 메시지
+### Common messages
 
-| 메시지 | 뜻과 대처 |
+| Message | What to do |
 |---|---|
-| `prod: vlist '3.2' is not installed on this node; run 'prod sync 3.2'` | `prod sync 3.2` |
-| `vlist '3.2' is not on the products server` | 이름을 확인하세요(`prod list --remote`) |
-| `cannot read from the products server …` | ssh 접속 확인 (4.2) |
-| `another prod is running on this node; try again later` | 다른 `prod`가 끝난 뒤 다시 |
-| `the products server is inconsistent for vlist …` | 서버 쪽 문제. 서버 관리자에게 |
-| `no configuration file …/prod.conf; run install.sh` | 도구가 설치되지 않았습니다 (4.3) |
-| `…/PRODUCTS is missing (installed by an older install.sh); run install.sh again` | 도구 설치본에 Products 경로 기록이 없습니다. 지금 tag에서 `./install.sh --force`로 다시 설치 |
-| `'release' runs only where role is 'server' (this node: 'client')` | release는 서버에서 |
+| `prod: vlist '4.1' is not installed on this node; run 'prod sync 4.1'` | `prod sync 4.1` |
+| `vlist '4.1' is not on the products server` | Check the name (`prod list --remote`) |
+| `cannot read from the products server …` | Check ssh access (4.2) |
+| `another prod is running on this node; try again later` | Wait for the other `prod` to finish |
+| `the products server is inconsistent for vlist …` | A server problem. Tell the server admin |
+| `no configuration file …/prod.conf; run install.sh` | The tool is not installed (4.3) |
+| `…/PRODUCTS is missing (installed by an older install.sh); run install.sh again` | Run `./install.sh --force` from the current tag |
+| `'release' runs only where role is 'server' (this node: 'client')` | Releases are made on the server |
 | `prod: environment-modules is not installed …` | `dnf install environment-modules` (root) |
-| `prod: local vlists (~/.prod-local) are not supported yet` | 로컬 vlist는 아직 구현 전입니다 |
+| `prod: local vlists (~/.prod-local) are not supported yet` | Local vlists are not implemented yet |
 
-### 아직 안 되는 것
+### Not done yet
 
-- 사용자 로컬 vlist(`~/.prod-local`)는 아직 구현하지 않았습니다.
-- `setup_prod.csh`는 csh가 있는 노드에서 아직 시험하지 못했습니다.
+- Per-user local vlists (`~/.prod-local`).
+- `setup_prod.csh` has not been tested on a node with csh.

@@ -1,0 +1,8 @@
+# cmake options of CUPDATAMODEL V1.3, read by recipes/CUPDATAMODEL/build.sh (one per line; '#' starts a comment).
+# The install prefix is added by build.sh. ROOT and HDF5 come from the modulefiles of the recipe's depends.
+#
+-DCMAKE_BUILD_TYPE=Release
+# never let cmake call dnf or apt
+-DCUPDM_AUTO_INSTALL_DEPENDENCIES=OFF
+# HDF5Utils is optional upstream (skipped without a word if HDF5 is not found); build.sh insists on it
+-DCUPDM_ENABLE_HDF5=ON
