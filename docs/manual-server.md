@@ -41,8 +41,8 @@ Terms:
 ```
 /home/cupsoft/Products/
 ├── .prod/
-│   ├── current -> versions/v1.0        the tool in use
-│   ├── versions/v1.0/                  tool versions (read-only)
+│   ├── current -> versions/vX.Y        the tool in use
+│   ├── versions/vX.Y/                  installed tool versions (read-only; the newest 3 are kept)
 │   ├── etc/prod.conf                   settings (role: server)
 │   └── state/                          history.jsonl, packages.yml, lock
 ├── vlist/
@@ -70,8 +70,8 @@ checkout `PYENV/`, is shown as one line: `PYENV/  (whole directory, no versions 
 ### 3.1 First install
 
 ```bash
-git clone https://github.com/cup-software2018/prodmanager.git ~/prodtemp/prodmanager   # any place
-cd ~/prodtemp/prodmanager
+git clone https://github.com/cup-software2018/prodmanager.git
+cd prodmanager
 git checkout vX.Y                                  # install tags only
 ./install.sh --role server
 git checkout main                                  # back to main, for building (5)
@@ -86,13 +86,17 @@ git checkout main                                  # back to main, for building 
   [3.4](#34-living-with-the-old-system));
 - ends with `prod doctor --quick`. Problems there do not fail the install.
 
+Keep the clone: the later steps (upgrades, builds, releases) run in it.
+
 If a package the tool needs is missing (`environment-modules`, `rsync`, `openssh-clients`, `python3`,
 `python3-pyyaml`, `git`), `install.sh` stops and tells you what to install.
 
 ### 3.2 Upgrade
 
+In your clone of the repository:
+
 ```bash
-cd ~/prodtemp/prodmanager && git fetch --tags && git checkout vX.Y
+git fetch --tags && git checkout vX.Y
 ./install.sh
 git checkout main                                  # back to main, for building (5)
 prod --version
@@ -101,14 +105,15 @@ sudo /home/cupsoft/Products/.prod/current/share/postinstall.sh --check   # as ro
 
 - `prod.conf` and `state/` stay. The newest 3 tool versions are kept (`--keep N`).
 - **If the new tag changed `packages/`, run `postinstall.sh` (section 4).** `--check` shows whether anything is
-  missing. For example, v1.0 added `xerces-c`, `unixODBC`, `pcsc-lite-libs`, `libtiff-devel` and `libcurl-devel`.
+  missing.
 - New modulefile templates are used from the next release on. Released vlists do not change.
 - The installed tool does not use the clone, so the clone can stay on `main` between upgrades.
 
 ### 3.3 Roll back
 
 ```bash
-ln -sfn versions/v0.4 /home/cupsoft/Products/.prod/current.tmp
+ls /home/cupsoft/Products/.prod/versions/          # kept versions (newest 3)
+ln -sfn versions/vX.Y /home/cupsoft/Products/.prod/current.tmp   # vX.Y: the version to go back to
 mv -T /home/cupsoft/Products/.prod/current.tmp /home/cupsoft/Products/.prod/current
 prod --version
 ```
@@ -141,7 +146,7 @@ When no node uses the old system any more, replace the server's old `~/setup_pro
 `~/setup_prod.sh.pre-prod`):
 
 ```bash
-cd ~/prodtemp/prodmanager && ./install.sh --replace-legacy-setup
+./install.sh --replace-legacy-setup              # in your clone of the repository
 ```
 
 ## 4. System packages
@@ -163,10 +168,10 @@ sudo /home/cupsoft/Products/.prod/current/share/postinstall.sh --group root --gr
 
 ## 5. Release a new vlist
 
-Everything happens on the server, in the repository clone (`~/prodtemp/prodmanager`):
+Everything happens on the server, in your clone of the repository:
 
 ```bash
-cd ~/prodtemp/prodmanager && git checkout main && git pull   # the newest recipes (no tag, no install)
+git checkout main && git pull                                # the newest recipes (no tag, no install)
 recipes/CUPDAQ/build.sh 4.3.2                                # build, check, save the recipe next to it
 vi /home/cupsoft/Products/vlist/drafts/daq_3.1.yml           # write a draft
 prod release daq_3.1 --check

@@ -150,8 +150,8 @@ If not, add cupsoft's ssh key to `~cupsoft/.ssh/authorized_keys` on the server.
 ### 4.3 Install the tool
 
 ```bash
-git clone https://github.com/cup-software2018/prodmanager.git ~/Devs/prodmanager   # any place
-cd ~/Devs/prodmanager && git checkout vX.Y
+git clone https://github.com/cup-software2018/prodmanager.git
+cd prodmanager && git checkout vX.Y
 ./install.sh --role client --server cupsoft@192.168.0.150:/home/cupsoft/Products
 ```
 
@@ -294,15 +294,16 @@ prod gc --yes                    # delete it
 
 ## 8. Upgrade and roll back the tool
 
+In your clone of the repository:
+
 ```bash
-cd ~/Devs/prodmanager && git fetch --tags && git checkout vX.Y
+git fetch --tags && git checkout vX.Y
 ./install.sh                     # prod.conf and history stay
 prod --version
 sudo /home/cupsoft/Products/.prod/current/share/postinstall.sh --check   # as root
 ```
 
 - **If the new tag changed `packages/`, run `postinstall.sh` (4.4).** `--check` shows whether anything is missing.
-  For example, v1.0 added `xerces-c`, `unixODBC`, `pcsc-lite-libs`, `libtiff-devel` and `libcurl-devel`.
 - Installed vlists don't change: their modulefiles were fixed at release.
 - If `prod` says "format N is newer than this tool supports", upgrade the tool.
 
@@ -310,7 +311,7 @@ Roll back:
 
 ```bash
 ls /home/cupsoft/Products/.prod/versions/          # kept versions (newest 3)
-ln -sfn versions/v0.4 /home/cupsoft/Products/.prod/current.tmp
+ln -sfn versions/vX.Y /home/cupsoft/Products/.prod/current.tmp   # vX.Y: the version to go back to
 mv -T /home/cupsoft/Products/.prod/current.tmp /home/cupsoft/Products/.prod/current
 ```
 
