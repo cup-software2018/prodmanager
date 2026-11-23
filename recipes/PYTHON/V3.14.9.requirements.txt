@@ -7,6 +7,7 @@
 #    Changed from Anaconda because PyPI metadata differ from conda's: spyder 6.1.5 needs
 #    python-lsp-server[all] 1.14, which needs pycodestyle<2.13, so flake8 7.3.0 -> 7.1.2,
 #    pycodestyle 2.14.0 -> 2.12.1, pyflakes 3.4.0 -> 3.2.0. The PyPI spyder also pulls in PyQt5.
+#    build 1.5.1 -> 1.5.0: 1.5.1 was yanked on PyPI ("breaking changes").
 aiobotocore==3.7.0
 aiodns==3.6.1
 aiohappyeyeballs==2.6.2
@@ -229,7 +230,7 @@ PySide6==6.11.0
 pysocks==1.7.1
 tables==3.11.1
 pytest==9.0.3
-build==1.5.1
+build==1.5.0
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.1
 fastjsonschema==2.21.2
