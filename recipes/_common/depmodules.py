@@ -8,8 +8,9 @@ Prints, one per line:
 
 A released dependency has its fixed modulefile in <Products>/modulefiles. A dependency that is built but not
 released yet (staging: its version directory exists, without a manifest) gets a modulefile made from this
-repository's template, exactly as `prod release` would make it, written to <outdir>/<NAME>/<VERSION>; the same is
-done for its own staging dependencies. Anything else is an error. Notes go to stderr.
+repository's template and its recipe (the one saved next to it by build.sh, else this repository's), exactly as
+`prod release` would make it, written to <outdir>/<NAME>/<VERSION>; the same is done for its own staging
+dependencies. Anything else is an error. Notes go to stderr.
 """
 
 import os
@@ -39,7 +40,7 @@ def ensure_module(products, outdir, name, version, seen):
     if not os.path.isdir(vdir) or os.path.exists(vdir + ".manifest"):
         sys.exit(f"depmodules: {name} {version} is neither released (no modulefile in {products}/modulefiles) "
                  f"nor built (no {vdir})")
-    for dep, dver in recipe.load(RECIPES, name, version).depends:
+    for dep, dver in recipe.find(products, RECIPES, name, version).depends:
         ensure_module(products, outdir, dep, dver, seen)
     text = modulefile.make_fixed(SOURCES, RECIPES, products, name, version, tool="build.sh (not released)",
                                  host=socket.gethostname(), time=time.strftime("%Y-%m-%dT%H:%M:%S%z"))

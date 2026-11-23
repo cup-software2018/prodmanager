@@ -12,8 +12,12 @@
 #       not find, with the rule of `prod doctor`: a library lying in the same directory as the file is not
 #       missing (Geant4's libraries have no RPATH and find each other through LD_LIBRARY_PATH).
 #
+#   ready <recipe.yml> <prefix> <Products>
+#       The end of a successful build: saves the recipe next to the version as <prefix>.recipe.yml
+#       (save-recipe.py; `prod release` reads it there, so no tool upgrade is needed), then says what comes next.
+#
 #   copy_hint <prefix>
-#       Prints the rsync command that copies the prefix to the products server.
+#       Prints the rsync command that copies the prefix and its saved recipe to the products server.
 #
 #   load_depends <recipe.yml> <Products> <workdir>
 #       Loads the modulefiles of the recipe's depends (environment-modules), and nothing else. Released ones are
@@ -81,8 +85,21 @@ missing_libs() {
 copy_hint() {
     # The destination is the server's real path: rsync 3.2.7-1.el9_8 as the receiving side refuses a destination
     # that goes through a symlink ("Too many levels of symbolic links"), and /home/cupsoft/Products is one.
-    log "  rsync -a $1/ <server>:<$1 with symlinks resolved on the server>/"
-    log "  (find that path with: ssh <server> readlink -f $1)"
+    local parent
+    parent="$(dirname "$1")"
+    log "  rsync -a $1 $1.recipe.yml <server>:<$parent with symlinks resolved on the server>/"
+    log "  (find that path with: ssh <server> readlink -f $parent)"
+}
+
+ready() {
+    local recipe="$1" prefix="$2" products="$3"
+    /usr/bin/python3 -I "$COMMON_DIR/save-recipe.py" "$recipe" --products "$products" | sed 's/^save-recipe:/build.sh:/' \
+        || die "could not save the recipe next to $prefix"
+    log "$(basename "$(dirname "$prefix")") $(basename "$prefix") is ready ($(du -sh "$prefix" | cut -f1))."
+    log "Next, on the products server: add it to a vlist draft, then run"
+    log "  prod release <vlist> --check && prod release <vlist>"
+    log "If you built it on another node, copy it to the server first:"
+    copy_hint "$prefix"
 }
 
 load_depends() {

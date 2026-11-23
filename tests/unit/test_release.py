@@ -66,6 +66,16 @@ class FakeServer(unittest.TestCase):
         with open(self.w(self.tool_root, "recipes", name, version + ".yml"), "w") as f:
             f.write("\n".join(lines) + "\n")
 
+    def saved_recipe(self, name, version, deps=()):
+        """A recipe saved next to the version by build.sh (save-recipe.py), not in the tool."""
+        lines = ['format: "1"', f'product: "{name}"', f'version: "{version}"']
+        if deps:
+            lines.append("depends:")
+            lines += [f'  - {{name: "{d}", version: "{v}"}}' for d, v in deps]
+        lines.append(f'built: "recipes/{name}/{version}.yml at commit 0123456789ab on cupdev0 at T"')
+        with open(self.w(self.paths.recipe_file(name, version)), "w") as f:
+            f.write("\n".join(lines) + "\n")
+
     def version(self, name, version, files):
         for rel, data in files.items():
             path = self.w(self.products, name, version, rel)
@@ -122,6 +132,47 @@ class TestRelease(FakeServer):
             info = f.read()
         self.assertIn('"root-config --version": "6.32.20"', info)
         self.assertIn('source: "extracted"', info)
+
+    def test_saved_recipe(self):
+        # a new version whose recipe is only next to it (built on the server), not in the tool
+        self.version("CUPDAQ", "V4.3.2", {"bin/daq": b"#!/bin/sh\n"})
+        with open(self.w(self.tool_root, "modulefiles", "CUPDAQ", "template.tcl"), "w") as f:
+            f.write(template("CUPDAQ", "CUPDAQ_DIR"))
+        self.saved_recipe("CUPDAQ", "V4.3.2", deps=[("HDF5", "V1.14.2")])
+        self.draft("daq_3.0", [("CUPDAQ", "V4.3.2"), ("HDF5", "V1.14.2")])
+        with self.assertRaisesRegex(CheckFailed, "needs HDF5 V1.14.2, which must come before it"):
+            self.release("daq_3.0", check=True)  # the saved recipe's depends are checked
+        self.draft("daq_3.0", [("HDF5", "V1.14.2"), ("CUPDAQ", "V4.3.2")])
+        rp = self.release("daq_3.0")
+        built = "recipes/CUPDAQ/V4.3.2.yml at commit 0123456789ab on cupdev0 at T"
+        self.assertEqual(rp.products[1].notes, [f"recipe CUPDAQ/V4.3.2.recipe.yml ({built})"])
+        self.assertEqual(rp.products[0].notes, [f"recipe recipes/HDF5/V1.14.2.yml @ {TOOL}"])
+        p = self.paths
+        with open(p.module_file("CUPDAQ/V4.3.2")) as f:
+            text = f.read()
+        self.assertIn(f"# recipe: CUPDAQ/V4.3.2.recipe.yml ({built})\n", text)
+        self.assertIn("module load HDF5/V1.14.2", text)
+        with open(p.buildinfo_file("CUPDAQ", "V4.3.2")) as f:
+            self.assertIn(f'recipe: "CUPDAQ/V4.3.2.recipe.yml ({built})"', f.read())
+        self.assertFalse(self.writable(p.recipe_file("CUPDAQ", "V4.3.2")))
+
+    def test_saved_recipe_locked_for_frozen(self):
+        # a frozen version's saved recipe that became writable is locked again by the next release
+        self.saved_recipe("HDF5", "V1.14.2")
+        self.draft("3.0", [("HDF5", "V1.14.2")])
+        self.release("3.0")
+        os.chmod(self.paths.recipe_file("HDF5", "V1.14.2"), 0o644)
+        self.draft("3.1", [("HDF5", "V1.14.2")])
+        self.release("3.1")
+        self.assertFalse(self.writable(self.paths.recipe_file("HDF5", "V1.14.2")))
+
+    def test_bad_saved_recipe(self):
+        self.version("CUPDAQ", "V4.3.2", {"bin/daq": b"#!/bin/sh\n"})
+        with open(self.w(self.paths.recipe_file("CUPDAQ", "V4.3.2")), "w") as f:
+            f.write('format: "1"\nproduct: "CUPDAQ"\nversion: "V4.3.1"\n')
+        self.draft("daq_3.0", [("CUPDAQ", "V4.3.2")])
+        with self.assertRaisesRegex(CheckFailed, "V4.3.2.recipe.yml: .*do not match the file location"):
+            self.release("daq_3.0", check=True)
 
     def test_second_release_reuses_frozen_versions(self):
         self.draft("3.0", [("PYTHON", "V3.11.14"), ("ROOT", "V6.32.20_3.11.14")])

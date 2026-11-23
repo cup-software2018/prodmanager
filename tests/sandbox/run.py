@@ -378,6 +378,32 @@ class Sandbox:
         self.prod("clientA", "sync", "9.0", expect=5, contains=["update the tool"])
         os.unlink(self.server_file("vlist/9.0.yml"))
 
+        self.step("server: a new version released with its saved recipe, without a tool upgrade; clients get it")
+        self.write(self.server_file("HDF5/V1.14.3/bin/h5dump"), "#!/bin/sh\necho h5dump 1.14.3\n", 0o755)
+        recipe = os.path.join(self.repo, "recipes", "HDF5", "V1.14.3.yml")  # in the clone only, not in tool v0.1
+        self.write(recipe, 'format: "1"\nproduct: "HDF5"\nversion: "V1.14.3"\n')
+        self.write(os.path.join(sp, "vlist", "drafts", "3.2.yml"), """
+            format: "1"
+            description: "HDF5 1.14.3"
+            products:
+              - {name: "HDF5", version: "V1.14.3"}
+            """)
+        self.prod("server", "release", "3.2", "--check", expect=1, contains=["no recipe: neither"])
+        self.run("server", [os.path.join(self.repo, "recipes", "_common", "save-recipe.py"), recipe, "--products", sp],
+                 contains=["V1.14.3.recipe.yml", "with uncommitted changes in recipes/HDF5/"])
+        self.prod("server", "release", "3.2", contains=["recipe HDF5/V1.14.3.recipe.yml (recipes/HDF5/V1.14.3.yml at "
+                                                       "commit", "vlist hash sha256:"])
+        self.run("server", [os.path.join(self.repo, "recipes", "_common", "save-recipe.py"), recipe, "--products", sp],
+                 expect=1, contains=["already released"])
+        with open(self.server_file("modulefiles/HDF5/V1.14.3")) as fh:
+            if "# recipe: HDF5/V1.14.3.recipe.yml (recipes/HDF5/V1.14.3.yml at commit" not in fh.read():
+                raise Failed("the modulefile header does not name the saved recipe")
+        self.prod("clientA", "sync", "3.2")
+        if not os.path.exists(os.path.join(cp, "HDF5", "V1.14.3.recipe.yml")):
+            raise Failed("sync did not bring the saved recipe")
+        self.run("clientA", "set -eu; . ~/setup_prod.sh 3.2; h5dump", shell=True, contains=["h5dump 1.14.3"])
+        self.prod("clientA", "verify", "3.2", absent=["error"])
+
         self.step("tool upgrade v0.2 (module revision for ROOT), then roll the client back to v0.1")
         tpl = os.path.join(self.repo, "modulefiles", "ROOT", "template.tcl")
         self.tag("v0.2", lambda: open(tpl, "a").write("setenv ROOT_SANDBOX_FIX 1\n"))

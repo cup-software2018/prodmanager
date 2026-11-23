@@ -1,7 +1,11 @@
 """Build recipes `recipes/<NAME>/<VERSION>.yml` in the git repository.
 
 Only the fields the tool uses are validated (format, product, version, depends, ldd_ignore). Other fields
-(source, build, notes) are free-form records for people.
+(source, build, notes, built) are free-form records for people.
+
+A recipe also travels with the version it built: recipes/_common/save-recipe.py (run by build.sh) copies it to
+`<Products>/<NAME>/<VERSION>.recipe.yml` with a `built` line (which file, which commit, where, when). That copy is
+read first (find), so a new version needs no new tool, and `prod sync` takes it to the nodes.
 
 ldd_ignore lists files of the version (glob patterns relative to the version directory) whose missing shared
 libraries `prod doctor` does not count, each with the reason: optional parts that are loaded only on demand.
@@ -15,10 +19,11 @@ from typing import List, Tuple
 
 from .errors import FormatError
 from .vlist import PRODUCT_RE, VERSION_RE
-from .yamlutil import check_format, load_mapping
+from .yamlutil import BAD_CHARS_RE, check_format, load_mapping
 
 FORMAT = 1
-_KEYS = ("format", "product", "version", "depends", "source", "build", "notes", "ldd_ignore")
+_KEYS = ("format", "product", "version", "depends", "source", "build", "notes", "ldd_ignore", "built")
+SAVED_SUFFIX = ".recipe.yml"
 
 # A suffix of an existing version name that names a dependency:
 #   ROOT V6.32.20_3.11.14     -> PYTHON V3.11.14
@@ -34,6 +39,14 @@ class Recipe:
     depends: List[Tuple[str, str]] = field(default_factory=list)
     has_build: bool = False  # True if the version was built from this recipe (it has a 'build' field)
     ldd_ignore: List[Tuple[str, str]] = field(default_factory=list)  # (glob pattern, reason)
+    built: str = ""  # the saved copy's record: which file, which commit, where, when
+    saved: bool = False  # read from <Products>/<NAME>/<VERSION>.recipe.yml, not from the tool
+
+    def origin(self, tool):
+        """Where the recipe was read, for records (buildinfo, modulefile headers)."""
+        if self.saved:
+            return f"{self.product}/{self.version}{SAVED_SUFFIX}" + (f" ({self.built})" if self.built else "")
+        return f"recipes/{self.product}/{self.version}.yml @ {tool}"
 
     def ldd_ignored(self, rel):
         """The reason if the file `rel` (relative to the version directory) is in ldd_ignore, else None."""
@@ -42,6 +55,10 @@ class Recipe:
 
 def path_of(recipes_root, product, version):
     return os.path.join(recipes_root, product, version + ".yml")
+
+
+def saved_path(products_dir, product, version):
+    return os.path.join(products_dir, product, version + SAVED_SUFFIX)
 
 
 def loads(data, product, version):
@@ -69,8 +86,12 @@ def loads(data, product, version):
         if any(n == d["name"] for n, _ in result):
             raise FormatError(f"{what}: depends on {d['name']} twice")
         result.append((d["name"], d["version"]))
+    built = doc.get("built", "")
+    # it goes into a Tcl comment of the modulefile header: one line, and no backslash (line continuation)
+    if not isinstance(built, str) or BAD_CHARS_RE.search(built) or "\\" in built:
+        raise FormatError(f"{what}: 'built' must be one line of text without backslashes")
     return Recipe(product=product, version=version, depends=result, has_build="build" in doc,
-                  ldd_ignore=_ldd_ignore(doc.get("ldd_ignore", []), what))
+                  ldd_ignore=_ldd_ignore(doc.get("ldd_ignore", []), what), built=built)
 
 
 def _ldd_ignore(items, what):
@@ -89,14 +110,37 @@ def _ldd_ignore(items, what):
     return result
 
 
-def load(recipes_root, product, version):
-    path = path_of(recipes_root, product, version)
+def _load_file(path, product, version):
     try:
         with open(path, "rb") as f:
             data = f.read()
     except FileNotFoundError:
         raise FormatError(f"no recipe {path}") from None
     return loads(data, product, version)
+
+
+def load(recipes_root, product, version):
+    """The tool's (or the repository's) recipe."""
+    return _load_file(path_of(recipes_root, product, version), product, version)
+
+
+def find(products_dir, recipes_root, product, version):
+    """The recipe of a version: the copy saved next to the version directory if there is one, else the tool's.
+    recipes_root may be None (no recipes in this tool)."""
+    path = saved_path(products_dir, product, version)
+    if os.path.lexists(path):
+        try:
+            rec = _load_file(path, product, version)
+        except FormatError as e:
+            raise FormatError(f"{path}: {e}") from None
+        rec.saved = True
+        return rec
+    tool_path = path_of(recipes_root, product, version) if recipes_root else None
+    if tool_path and os.path.exists(tool_path):
+        return _load_file(tool_path, product, version)
+    raise FormatError(f"no recipe: neither {path}" + (f" nor {tool_path}" if tool_path else "")
+                      + " exists (build.sh writes the first; for a version without build.sh, run "
+                        "recipes/_common/save-recipe.py)")
 
 
 def depends_from_suffix(version):

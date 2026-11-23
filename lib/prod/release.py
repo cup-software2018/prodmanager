@@ -3,8 +3,8 @@
 release works in two phases:
   plan  - read and check everything, build manifests of staging versions, build modulefiles in memory.
           Nothing is written. `--check` stops here.
-  write - per staging version: lock the tree, quick re-check, write buildinfo then manifest (the manifest
-          makes the version frozen); write new fixed modulefiles and the bundle; finally write the vlist,
+  write - per staging version: lock the tree and its saved recipe (<VER>.recipe.yml), quick re-check, write
+          buildinfo then manifest (the manifest makes the version frozen); write new fixed modulefiles and the bundle; finally write the vlist,
           which is the moment of release. Then remove the draft and record history.
 """
 
@@ -173,15 +173,15 @@ def plan(paths, cfg, name, *, tool_root, tool, migrate=False, module_revs=(), no
                                               created=f"{now} by prod {tool} on {host}")
             pp.manifest_hash = sha256_bytes(pp.manifest_data)
             try:
-                rec = recipe.load(recipes_root, p.name, p.version)
+                rec = recipe.find(paths.products, recipes_root, p.name, p.version)
                 script = buildinfo_mod.script_path(recipes_root, p.name)
                 info = buildinfo_mod.extract(script, vdir) if script else []
             except FormatError as e:
                 problems.append(f"{p.name} {p.version}: {e}")
                 continue
+            pp.notes.append(f"recipe {rec.origin(tool)}")
             pp.buildinfo_data = buildinfo_mod.dumps(
-                p.name, p.version, "recipe" if rec.has_build else "extracted",
-                f"recipes/{p.name}/{p.version}.yml @ {tool}",
+                p.name, p.version, "recipe" if rec.has_build else "extracted", rec.origin(tool),
                 f"{now} by prod {tool} on {host} ({buildinfo_mod.os_name()})", info)
 
         # fixed modulefile
@@ -205,7 +205,7 @@ def plan(paths, cfg, name, *, tool_root, tool, migrate=False, module_revs=(), no
     # dependencies must be in this vlist, with the same version, earlier in the list
     for i, p in enumerate(draft.products):
         try:
-            rec = recipe.load(recipes_root, p.name, p.version)
+            rec = recipe.find(paths.products, recipes_root, p.name, p.version)
         except FormatError:
             continue  # already reported
         earlier = {(q.name, q.version) for q in draft.products[:i]}
@@ -236,6 +236,12 @@ def plan(paths, cfg, name, *, tool_root, tool, migrate=False, module_revs=(), no
                        vlist_data=vlist_mod.dumps(v), warnings=warnings)
 
 
+def _lock_saved_recipe(paths, pp):
+    path = paths.recipe_file(pp.name, pp.version)
+    if os.path.lexists(path):
+        fsutil.lock_path(path)
+
+
 def write(paths, rp, *, tool, progress=progress_mod.SILENT):
     """Carry out a ReleasePlan."""
     for pp in rp.products:
@@ -246,10 +252,12 @@ def write(paths, rp, *, tool, progress=progress_mod.SILENT):
             changed = manifest.verify(pp.entries, vdir, quick=True)
             if manifest.has_errors(changed):
                 raise CheckFailed(f"{pp.name} {pp.version} changed while releasing; nothing was frozen for it")
+            _lock_saved_recipe(paths, pp)
             state.atomic_write(paths.buildinfo_file(pp.name, pp.version), pp.buildinfo_data, mode=0o444)
             state.atomic_write(paths.manifest_file(pp.name, pp.version), pp.manifest_data, mode=0o444)
         else:
             fsutil.lock_tree(vdir)
+            _lock_saved_recipe(paths, pp)
         if pp.module_text is not None:
             os.makedirs(os.path.join(paths.modulefiles, pp.name), exist_ok=True)
             state.atomic_write(paths.module_file(pp.module), pp.module_text.encode("utf-8"), mode=0o444)

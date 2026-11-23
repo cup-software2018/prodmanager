@@ -59,6 +59,9 @@ class Paths:
     def buildinfo_file(self, product, version):
         return os.path.join(self.products, product, version + ".buildinfo")
 
+    def recipe_file(self, product, version):
+        return os.path.join(self.products, product, version + ".recipe.yml")  # recipe.SAVED_SUFFIX
+
     def module_file(self, module):
         """`ROOT/V6.32.20_3.11.14[-m2]` -> <Products>/modulefiles/ROOT/V6.32.20_3.11.14[-m2]"""
         return os.path.join(self.modulefiles, *module.split("/"))

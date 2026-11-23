@@ -9,7 +9,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
-from prod import cli, config, fsutil, inventory, state, transfer
+from prod import cli, config, doctor, fsutil, inventory, state, transfer
 from prod import progress as progress_mod
 from prod import sync as sync_mod
 from prod import verify as verify_mod
@@ -171,6 +171,31 @@ class TestSync(FakeClient):
         self.verify("3.0", fix_perms=True)
         self.assertFalse(os.lstat(f).st_mode & 0o222)
         self.assertEqual(self.verify("3.0")[0].warnings, [])
+
+
+class TestSavedRecipe(FakeClient):
+    def test_sync_and_gc(self):
+        # a version released with a saved recipe: the client gets it, and gc removes it with the version
+        self.version("HDF5", "V2.2.0", {"lib/libhdf5.so": b"h5 2"})
+        self.saved_recipe("HDF5", "V2.2.0")
+        self.draft("3.2", [("HDF5", "V2.2.0")])
+        self.release("3.2")
+        [r] = self.sync("3.2")
+        self.assertEqual(r.warnings, [])
+        path = self.cpaths.recipe_file("HDF5", "V2.2.0")
+        with open(path, "rb") as f, open(self.paths.recipe_file("HDF5", "V2.2.0"), "rb") as g:
+            self.assertEqual(f.read(), g.read())
+        self.assertFalse(os.lstat(path).st_mode & 0o222)
+        self.assertFalse(os.path.exists(self.cpaths.recipe_file("HDF5", "V1.14.2")))  # none on the server: fine
+        self.assertEqual(inventory.unmanaged(self.cpaths), ([], []))
+        # doctor reads ldd_ignore from it, even with a tool that has no recipe for the version
+        recs = doctor._recipes_of(self.cpaths, None, [("HDF5", "V2.2.0"), ("HDF5", "V1.14.2")])
+        self.assertEqual(list(recs), [("HDF5", "V2.2.0")])
+        self.assertTrue(recs[("HDF5", "V2.2.0")].saved)
+        inventory.remove(self.cpaths, self.ccfg, ["3.2"], tool=TOOL)
+        cands = {os.path.relpath(c, self.cpaths.products) for c in inventory.gc_candidates(self.cpaths)}
+        self.assertEqual(cands, {"HDF5/V2.2.0", "HDF5/V2.2.0.manifest", "HDF5/V2.2.0.buildinfo",
+                                 "HDF5/V2.2.0.recipe.yml", "modulefiles/HDF5/V2.2.0"})
 
 
 class TestInventory(FakeClient):

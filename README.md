@@ -66,7 +66,7 @@ prod verify
 | `shell/` | `setup_prod.sh`, `setup_prod.csh` |
 | `modulefiles/<NAME>/` | Modulefile template (`template.tcl`, optional `generate`); `_common/` has shared helpers |
 | `recipes/<NAME>/` | Per version: `V<version>.yml` (dependencies, notes), and for products we build: `V<version>.options` (cmake) or `V<version>.requirements.txt` (pip). Per product: `build.sh`, `buildinfo.sh` |
-| `recipes/_common/` | Helpers shared by the `build.sh` scripts |
+| `recipes/_common/` | Helpers shared by the `build.sh` scripts; `save-recipe.py` (keeps a recipe next to its version) |
 | `recipes/<NAME>/check/` | Test programs that `build.sh` runs against a new installation (HDF5, CUPDATAMODEL, CUPDAQ) |
 | `packages/` | System package lists, by group |
 | `tests/` | Unit tests, sandbox test, real-data test |
@@ -89,4 +89,7 @@ prod verify
 ## Development
 
 - People commit, tag and push. Nodes install tags (`vX.Y`) only.
+- A new product version needs no new tag: `build.sh` saves its recipe next to the version
+  (`<NAME>/<VERSION>.recipe.yml`), and `prod release` and `prod sync` use that copy. Tag only when the tool,
+  the modulefile templates or the package lists change.
 - Everything is written in English: code, comments, messages and documentation.

@@ -4,7 +4,8 @@ Per vlist:
   1. fetch the vlist (and .withdrawn) into a temporary directory
   2. check the format and compare the vlist hash with the trusted record (first sync: record it)
   3. stop if withdrawn (unless --force)
-  4. fetch manifests, buildinfo, fixed modulefiles and the bundle; check them against the vlist hashes
+  4. fetch manifests, buildinfo, saved recipes (if any), fixed modulefiles and the bundle; check them against the
+     vlist hashes (buildinfo and recipes are records: not hashed)
   5. per version: keep it if it already matches its manifest; otherwise mirror it into
      `<NAME>/.<VER>.partial` (reusing unchanged files with --link-dest), verify it completely, lock it,
      and swap it in with renames (running processes keep the old inodes)
@@ -129,12 +130,13 @@ def _sync_one(paths, cfg, name, *, tool, dry_run, force, retrust, done, progress
 
         # 4: metadata
         meta = {f"modulefiles/vlist/{name}": v.bundle}
-        buildinfos = []
+        buildinfos, recipes = [], []
         for p in v.products:
             meta[f"{p.name}/{p.version}.manifest"] = p.manifest
             meta[f"modulefiles/{p.module}"] = p.modulefile
             buildinfos.append(f"{p.name}/{p.version}.buildinfo")
-        got = transfer.fetch_files(cfg, list(meta) + buildinfos, tmp)
+            recipes.append(f"{p.name}/{p.version}.recipe.yml")  # only versions built with save-recipe.py have one
+        got = transfer.fetch_files(cfg, list(meta) + buildinfos + recipes, tmp)
         bad = []
         for rel, expected in meta.items():
             if rel not in got:
@@ -184,7 +186,7 @@ def _sync_one(paths, cfg, name, *, tool, dry_run, force, retrust, done, progress
 
         # 6: metadata in place, vlist last
         if not dry_run:
-            for rel in list(meta) + [b for b in buildinfos if b in got]:
+            for rel in list(meta) + [b for b in buildinfos + recipes if b in got]:
                 if rel == f"modulefiles/vlist/{name}":
                     continue
                 state.atomic_write(os.path.join(paths.products, rel), _read(os.path.join(tmp, rel)), mode=0o444)

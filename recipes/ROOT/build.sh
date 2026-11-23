@@ -17,8 +17,9 @@
 #   /tmp/prod-build-root-<root>_<python>), never under Products.
 # - ROOT compiles LLVM/Clang: each job may need 2 GB of memory, so keep --jobs below memory in GB / 2.
 #
-# The binary is not relocatable: build on a node with the same OS as the others (AlmaLinux 9) and the same
-# Products path, then copy the prefix to the server with `rsync -a` before `prod release`.
+# The binary is not relocatable: build at the final path, on the products server or on a node with the same OS
+# (AlmaLinux 9) and the same Products path (then copy it to the server as printed at the end). At the end the
+# recipe is saved next to the version, <Products>/ROOT/V<version>.recipe.yml; `prod release` reads it there.
 
 set -euo pipefail
 
@@ -30,7 +31,7 @@ fi
 die() { echo "build.sh: $*" >&2; exit 1; }
 log() { echo "build.sh: $*"; }
 
-usage() { sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; }
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/../_common/build-common.sh" # with_progress, missing_libs
@@ -62,6 +63,7 @@ NAME="V${ROOTVER}_${PYVER}"
 PREFIX="$PRODUCTS/ROOT/$NAME"
 PYPREFIX="$PRODUCTS/PYTHON/V$PYVER"
 PY="$PYPREFIX/bin/python3"
+RECIPE="$HERE/$NAME.yml"
 OPTIONS="$HERE/$NAME.options"
 WORKDIR="${WORKDIR:-${TMPDIR:-/tmp}/prod-build-root-$NAME}"
 SRC="$WORKDIR/root-$ROOTVER"
@@ -71,6 +73,7 @@ URL="https://root.cern/download/root_v$ROOTVER.source.tar.gz"
 [ -d "$PRODUCTS" ] || die "$PRODUCTS does not exist"
 [ ! -e "$PRODUCTS/ROOT/$NAME.manifest" ] || die "ROOT $NAME is already released (it has a manifest); it must not change"
 [ -x "$PY" ] || die "no $PY: build PYTHON V$PYVER first"
+[ -f "$RECIPE" ] || die "no recipe $RECIPE"
 [ -f "$OPTIONS" ] || die "no cmake options $OPTIONS"
 
 umask 022
@@ -143,8 +146,7 @@ EOS
         echo "$missing" | head -20
         die "$(echo "$missing" | wc -l) missing shared libraries (above)"
     fi
-    log "ROOT $NAME is ready ($(du -sh "$PREFIX" | cut -f1)). Next: copy it and PYTHON V$PYVER to the server with"
-    copy_hint "$PREFIX"
+    ready "$RECIPE" "$PREFIX" "$PRODUCTS"
 }
 
 case "$STAGE" in

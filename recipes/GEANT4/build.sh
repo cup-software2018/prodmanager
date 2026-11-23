@@ -13,8 +13,9 @@
 # - The source, the build tree, the example check and the logs go to --workdir (default
 #   /tmp/prod-build-geant4-<version>), never under Products.
 #
-# The binary is not relocatable: build on a node with the same OS as the others (AlmaLinux 9) and the same
-# Products path, then copy the prefix to the server with `rsync -a` before `prod release`.
+# The binary is not relocatable: build at the final path, on the products server or on a node with the same OS
+# (AlmaLinux 9) and the same Products path (then copy it to the server as printed at the end). At the end the
+# recipe is saved next to the version, <Products>/GEANT4/V<version>.recipe.yml; `prod release` reads it there.
 
 set -euo pipefail
 
@@ -26,7 +27,7 @@ fi
 die() { echo "build.sh: $*" >&2; exit 1; }
 log() { echo "build.sh: $*"; }
 
-usage() { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; }
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/../_common/build-common.sh" # with_progress, missing_libs
@@ -53,6 +54,7 @@ done
 
 NAME="V$VER"
 PREFIX="$PRODUCTS/GEANT4/$NAME"
+RECIPE="$HERE/$NAME.yml"
 OPTIONS="$HERE/$NAME.options"
 WORKDIR="${WORKDIR:-${TMPDIR:-/tmp}/prod-build-geant4-$VER}"
 SRC="$WORKDIR/geant4-v$VER"
@@ -61,6 +63,7 @@ URL="https://gitlab.cern.ch/geant4/geant4/-/archive/v$VER/geant4-v$VER.tar.gz"
 
 [ -d "$PRODUCTS" ] || die "$PRODUCTS does not exist"
 [ ! -e "$PRODUCTS/GEANT4/$NAME.manifest" ] || die "GEANT4 $NAME is already released (it has a manifest); it must not change"
+[ -f "$RECIPE" ] || die "no recipe $RECIPE"
 [ -f "$OPTIONS" ] || die "no cmake options $OPTIONS"
 
 umask 022
@@ -142,8 +145,7 @@ EOS
         echo "$missing" | head -20
         die "$(echo "$missing" | wc -l) missing shared libraries (above)"
     fi
-    log "GEANT4 $NAME is ready ($(du -sh "$PREFIX" | cut -f1)). Next: copy it to the server with"
-    copy_hint "$PREFIX"
+    ready "$RECIPE" "$PREFIX" "$PRODUCTS"
 }
 
 case "$STAGE" in

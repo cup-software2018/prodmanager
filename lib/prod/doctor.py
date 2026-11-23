@@ -8,6 +8,7 @@
   ldd        no ELF file of the vlist's versions misses a shared library, inside that environment. Not counted:
              a library that lies next to the file (bundled by a pip wheel, loaded before it), Qt plugins and QML
              modules (loaded only on demand; platform plugins still count), and files in the recipe's ldd_ignore
+             (the recipe saved next to the version, <VER>.recipe.yml, else the tool's)
 
 For tests only: PROD_RPM replaces the rpm command.
 """
@@ -222,14 +223,14 @@ def classify_missing(missing, owner, recipes):
     return real, on_demand, ignored
 
 
-def _recipes_of(recipes_root, versions):
+def _recipes_of(paths, recipes_root, versions):
+    """{(name, version): Recipe}: the recipe saved next to the version, else the tool's."""
     result = {}
     for key in versions:
-        if recipes_root:
-            try:
-                result[key] = recipe_mod.load(recipes_root, *key)
-            except FormatError:
-                continue  # no recipe for this version in this tool: nothing is ignored
+        try:
+            result[key] = recipe_mod.find(paths.products, recipes_root, *key)
+        except FormatError:
+            continue  # no recipe for this version: nothing is ignored
     return result
 
 
@@ -251,7 +252,7 @@ def check_vlist(paths, name, versions, home, run_ldd, recipes_root=None):
         batch = files[i:i + LDD_BATCH]
         out = subprocess.run(["ldd"] + batch, env=env, capture_output=True, text=True, check=False)
         missing += parse_ldd(out.stdout, batch)
-    real, on_demand, ignored = classify_missing(missing, owner, _recipes_of(recipes_root, versions))
+    real, on_demand, ignored = classify_missing(missing, owner, _recipes_of(paths, recipes_root, versions))
     notes = []
     if on_demand:
         notes.append(f"not counted: {len(on_demand)} Qt plugin/QML files that need libraries not installed here "

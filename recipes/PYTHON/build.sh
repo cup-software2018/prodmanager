@@ -17,8 +17,9 @@
 # - The source, the build tree, the pip cache and the logs go to --workdir (default /tmp/prod-build-python-<version>),
 #   never under Products. pip-freeze.txt there is the installed package list.
 #
-# The binary is not relocatable: build on a node with the same OS as the others (AlmaLinux 9) and the same
-# Products path, then copy the prefix to the server with `rsync -a` before `prod release`.
+# The binary is not relocatable: build at the final path, on the products server or on a node with the same OS
+# (AlmaLinux 9) and the same Products path (then copy it to the server as printed at the end). At the end the
+# recipe is saved next to the version, <Products>/PYTHON/V<version>.recipe.yml; `prod release` reads it there.
 
 set -euo pipefail
 
@@ -30,7 +31,7 @@ fi
 die() { echo "build.sh: $*" >&2; exit 1; }
 log() { echo "build.sh: $*"; }
 
-usage() { sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; }
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/../_common/build-common.sh" # with_progress, missing_libs
@@ -74,12 +75,14 @@ done
 NAME="V$VER"
 PREFIX="$PRODUCTS/PYTHON/$NAME"
 PY="$PREFIX/bin/python3"
+RECIPE="$HERE/$NAME.yml"
 REQS="$HERE/$NAME.requirements.txt"
 WORKDIR="${WORKDIR:-${TMPDIR:-/tmp}/prod-build-python-$VER}"
 URL="https://www.python.org/ftp/python/$VER/Python-$VER.tar.xz"
 
 [ -d "$PRODUCTS" ] || die "$PRODUCTS does not exist"
 [ ! -e "$PRODUCTS/PYTHON/$NAME.manifest" ] || die "PYTHON $NAME is already released (it has a manifest); it must not change"
+[ -f "$RECIPE" ] || die "no recipe $RECIPE"
 [ -f "$REQS" ] || die "no package list $REQS"
 
 umask 022
@@ -160,8 +163,4 @@ case "$STAGE" in
     all) build; packages ;;
 esac
 
-if [ "$DRY_RUN" -eq 0 ]; then
-    log "staging $PREFIX is ready ($(du -sh "$PREFIX" | cut -f1)). Next: copy it to the server with"
-    copy_hint "$PREFIX"
-    log "and release it there (prod release <vlist> --check, then prod release <vlist>)."
-fi
+[ "$DRY_RUN" -eq 1 ] || ready "$RECIPE" "$PREFIX" "$PRODUCTS"

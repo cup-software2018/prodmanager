@@ -19,8 +19,9 @@
 # - The source, the build tree and the logs go to --workdir (default /tmp/prod-build-cupdaq-<version>), never
 #   under Products.
 #
-# The binary is not relocatable: build on a node with the same OS as the others (AlmaLinux 9) and the same
-# Products path, then copy the prefix to the server with `rsync -a` before `prod release`.
+# The binary is not relocatable: build at the final path, on the products server or on a node with the same OS
+# (AlmaLinux 9) and the same Products path (then copy it to the server as printed at the end). At the end the
+# recipe is saved next to the version, <Products>/CUPDAQ/V<version>.recipe.yml; `prod release` reads it there.
 
 set -euo pipefail
 
@@ -32,7 +33,7 @@ fi
 die() { echo "build.sh: $*" >&2; exit 1; }
 log() { echo "build.sh: $*"; }
 
-usage() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; }
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/../_common/build-common.sh"
@@ -160,8 +161,7 @@ check() {
         echo "$missing" | head -20
         die "$(echo "$missing" | wc -l) missing shared libraries (above)"
     fi
-    log "CUPDAQ $NAME is ready ($(du -sh "$PREFIX" | cut -f1)). Next: copy it to the server with"
-    copy_hint "$PREFIX"
+    ready "$RECIPE" "$PREFIX" "$PRODUCTS"
 }
 
 case "$STAGE" in

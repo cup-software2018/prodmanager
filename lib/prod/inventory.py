@@ -1,8 +1,8 @@
 """`prod list`, `prod remove`, `prod gc`.
 
 What prod manages under Products: `.prod/`, `vlist/<name>.yml|.withdrawn`, `vlist/drafts/` (server),
-`modulefiles/`, and per product `<VER>/`, `<VER>.manifest`, `<VER>.buildinfo` for versions that have a
-manifest. Everything else is "unmanaged" and is never deleted by prod. A product-named directory with
+`modulefiles/`, and per product `<VER>/`, `<VER>.manifest`, `<VER>.buildinfo`, `<VER>.recipe.yml` for versions
+that have a manifest. Everything else is "unmanaged" and is never deleted by prod. A product-named directory with
 no version-like entry (V...) in it is listed as one entry, "<DIR>/", instead of entry by entry.
 """
 
@@ -60,7 +60,7 @@ def unmanaged(paths):
                 leftovers.append(f"{top}/{n}")
                 continue
             base = n
-            for suffix in (manifest.SUFFIX, ".buildinfo"):
+            for suffix in (manifest.SUFFIX, ".buildinfo", ".recipe.yml"):
                 if n.endswith(suffix):
                     base = n[: -len(suffix)]
             versionish = versionish or bool(vlist_mod.VERSION_RE.match(base))
@@ -150,7 +150,7 @@ def gc_candidates(paths):
     for name, version in frozen_versions(paths):
         if (name, version) not in users:
             for path in (paths.version_dir(name, version), paths.manifest_file(name, version),
-                         paths.buildinfo_file(name, version)):
+                         paths.buildinfo_file(name, version), paths.recipe_file(name, version)):
                 if os.path.lexists(path):
                     out.append(path)
     if os.path.isdir(paths.modulefiles):

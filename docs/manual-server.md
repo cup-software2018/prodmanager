@@ -57,6 +57,7 @@ Terms:
     ├── V6.40.04_3.14.9/                binaries (locked after release)
     ├── V6.40.04_3.14.9.manifest
     ├── V6.40.04_3.14.9.buildinfo       build record, for people to read
+    ├── V6.40.04_3.14.9.recipe.yml      the recipe it was built with (saved by build.sh)
     └── setup_ROOT.sh                   old system; kept for now
 ```
 
@@ -73,6 +74,7 @@ git clone https://github.com/cup-software2018/prodmanager.git ~/prodtemp/prodman
 cd ~/prodtemp/prodmanager
 git checkout vX.Y                                  # install tags only
 ./install.sh --role server
+git checkout main                                  # back to main, for building (5)
 ```
 
 `install.sh`:
@@ -92,6 +94,7 @@ If a package the tool needs is missing (`environment-modules`, `rsync`, `openssh
 ```bash
 cd ~/prodtemp/prodmanager && git fetch --tags && git checkout vX.Y
 ./install.sh
+git checkout main                                  # back to main, for building (5)
 prod --version
 sudo /home/cupsoft/Products/.prod/current/share/postinstall.sh --check   # as root; see section 4
 ```
@@ -99,7 +102,8 @@ sudo /home/cupsoft/Products/.prod/current/share/postinstall.sh --check   # as ro
 - `prod.conf` and `state/` stay. The newest 3 tool versions are kept (`--keep N`).
 - **If the new tag changed `packages/`, run `postinstall.sh` (section 4).** `--check` shows whether anything is
   missing. For example, v1.0 added `xerces-c`, `unixODBC`, `pcsc-lite-libs`, `libtiff-devel` and `libcurl-devel`.
-- New recipes and modulefile templates are used from the next release on. Released vlists do not change.
+- New modulefile templates are used from the next release on. Released vlists do not change.
+- The installed tool does not use the clone, so the clone can stay on `main` between upgrades.
 
 ### 3.3 Roll back
 
@@ -159,69 +163,25 @@ sudo /home/cupsoft/Products/.prod/current/share/postinstall.sh --group root --gr
 
 ## 5. Release a new vlist
 
-Steps: build the new versions → add their recipes to the repository and upgrade the tool → write a draft →
-`prod release --check` → `prod release`.
-
-### 5.1 Build (staging)
-
-Products are not relocatable, so **build at the final path**. Until the release you may change or delete the
-directory; clients do not see it.
-
-For these products the repository has a build script. It gets the source and builds, tests, installs and checks
-the product:
-
-| Product | Command | Options file |
-|---|---|---|
-| PYTHON | `recipes/PYTHON/build.sh <version>` | `V<version>.requirements.txt` (pip packages) |
-| ROOT | `recipes/ROOT/build.sh <ROOT version> <Python version>` | `V<version>.options` (cmake) |
-| GEANT4 | `recipes/GEANT4/build.sh <version>` | `V<version>.options` |
-| HDF5 | `recipes/HDF5/build.sh <version>` | `V<version>.options` |
-| CUPDATAMODEL | `recipes/CUPDATAMODEL/build.sh <version>` | `V<version>.options` |
-| CUPDAQ | `recipes/CUPDAQ/build.sh <version>` | `V<version>.options` |
-
-- The script runs in a clean environment, so a loaded vlist does not leak in.
-- Build output goes to log files in `--workdir` (default `/tmp/prod-build-<name>-<version>`). The screen shows one
-  progress line a minute, for example `build.sh: compiling 45% at 12:31 (23 min)`.
-- At the end it checks the result and prints the command to copy it to the server. Some products also use files
-  from `recipes/<NAME>/check/`: HDF5 and CUPDATAMODEL build a small program against the new installation the way
-  the DAQ uses them; CUPDAQ starts every program and reads a sample configuration (no hardware needed).
-
-**Our own packages from GitHub** (CUPDATAMODEL, CUPDAQ): write the recipe (5.2) first. Its `source` names the
-repository and the exact commit, and `depends` names what the build uses:
-
-```yaml
-depends:
-  - {name: "ROOT", version: "V6.40.04_3.14.9"}
-  - {name: "HDF5", version: "V2.2.0"}
-source:
-  url: "https://github.com/cup-software2018/CUPDataModel.git"
-  branch: "v1.3"                                         # for people; branches move
-  commit: "93fcf9c8493843af3f1b5572bc3151b16a7f33cb"   # build.sh checks out exactly this
-```
-
-- `build.sh` loads the modulefiles of `depends` and nothing else, so the build sees exactly what users of the
-  vlist get. Released dependencies use their fixed modulefiles.
-- A dependency that is **built but not released yet** (for example CUPDATAMODEL, built just before CUPDAQ) gets a
-  modulefile made from the repository's template, the same one `prod release` would write. Release both in the
-  same vlist.
-- Build them in dependency order: CUPDATAMODEL, then CUPDAQ.
-
-**You can build on another node** with the same OS (AlmaLinux 9) and the same path (`/home/cupsoft/Products`). Then
-copy the directory to the server and change it on neither side afterwards:
+Everything happens on the server, in the repository clone (`~/prodtemp/prodmanager`):
 
 ```bash
-rsync -a /home/cupsoft/Products/ROOT/V6.40.04_3.14.9/ \
-      cupsoft@192.168.0.150:/scratch/cupsoft/Products/ROOT/V6.40.04_3.14.9/
+cd ~/prodtemp/prodmanager && git checkout main && git pull   # the newest recipes (no tag, no install)
+recipes/CUPDAQ/build.sh 4.3.2                                # build, check, save the recipe next to it
+vi /home/cupsoft/Products/vlist/drafts/daq_3.1.yml           # write a draft
+prod release daq_3.1 --check
+prod release daq_3.1
 ```
 
-- Use the server's **real path**. On cupdev0, `/home/cupsoft/Products` is a symlink to `/scratch/cupsoft/Products`,
-  and the AlmaLinux 9 rsync (3.2.7-1.el9_8) refuses a destination that goes through a symlink ("Too many levels of
-  symbolic links"). Find the real path with `ssh cupsoft@192.168.0.150 readlink -f /home/cupsoft/Products`.
-- Write the build node into the recipe's `notes`.
+- `build.sh` saves the recipe next to the new version, as `<NAME>/<VERSION>.recipe.yml`. `prod release` reads it
+  there, so **a new version needs no new tag and no tool upgrade**.
+- You need a tag and a tool upgrade ([3.2](#32-upgrade)) only when the tool itself changes: a new product name (it
+  needs a modulefile template, [5.6](#56-modulefile-template-for-a-new-product)), a changed template, the tool's code,
+  or `packages/`.
 
-### 5.2 Add the recipes
+### 5.1 Write the recipe
 
-The tool must have a **recipe** for every version you release. Add it to the repository:
+Every version needs a **recipe**, `recipes/<NAME>/V<version>.yml`, in the repository:
 
 ```yaml
 # recipes/ROOT/V6.40.04_3.14.9.yml
@@ -237,7 +197,21 @@ notes: "free text"
 ```
 
 - The tool checks only `format`, `product`, `version`, `depends` and `ldd_ignore`. `source`, `build` and `notes`
-  are a record.
+  are a record. (`built` is added by `build.sh`; don't write it yourself.)
+- Products that we build also need their options: `V<version>.options` (cmake), or for PYTHON
+  `V<version>.requirements.txt` (pip packages).
+- **Our own packages from GitHub** (CUPDATAMODEL, CUPDAQ): `source` names the repository and the exact commit:
+
+  ```yaml
+  depends:
+    - {name: "ROOT", version: "V6.40.04_3.14.9"}
+    - {name: "HDF5", version: "V2.2.0"}
+  source:
+    url: "https://github.com/cup-software2018/CUPDataModel.git"
+    branch: "v1.3"                                         # for people; branches move
+    commit: "93fcf9c8493843af3f1b5572bc3151b16a7f33cb"   # build.sh checks out exactly this
+  ```
+
 - `ldd_ignore` lists optional files (globs in the version directory) that `prod doctor` should not count when they
   miss a shared library, with the reason:
 
@@ -250,9 +224,69 @@ notes: "free text"
   You don't need to list libraries that a pip wheel ships in the same directory, or Qt plugins and QML modules
   (except platform plugins). They are not counted anyway.
 - A **new product** (a name that does not exist yet) also needs a modulefile template
-  ([5.6](#56-modulefile-template-for-a-new-product)), and optionally `recipes/<NAME>/buildinfo.sh`.
+  ([5.6](#56-modulefile-template-for-a-new-product)), and optionally `recipes/<NAME>/buildinfo.sh`. These are part of
+  the tool: tag and upgrade the tool ([3.2](#32-upgrade)) before you release the product.
+- Write the recipe where you like: in the server's clone, or elsewhere and then `git pull` on the server. Commit and
+  push it in the end, because the git history is the record. The saved copy names the commit it came from, and says
+  "with uncommitted changes" if `recipes/<NAME>/` was not committed when you built.
 
-Commit, tag, and upgrade the tool on the server ([3.2](#32-upgrade)).
+### 5.2 Build (staging)
+
+Products are not relocatable, so **build at the final path**. Until the release you may change, delete or rebuild
+the directory; clients do not see it.
+
+For these products the repository has a build script. It gets the source and builds, tests, installs and checks
+the product:
+
+| Product | Command |
+|---|---|
+| PYTHON | `recipes/PYTHON/build.sh <version>` |
+| ROOT | `recipes/ROOT/build.sh <ROOT version> <Python version>` |
+| GEANT4 | `recipes/GEANT4/build.sh <version>` |
+| HDF5 | `recipes/HDF5/build.sh <version>` |
+| CUPDATAMODEL | `recipes/CUPDATAMODEL/build.sh <version>` |
+| CUPDAQ | `recipes/CUPDAQ/build.sh <version>` |
+
+- The script runs in a clean environment, so a loaded vlist does not leak in.
+- Build output goes to log files in `--workdir` (default `/tmp/prod-build-<name>-<version>`). The screen shows one
+  progress line a minute, for example `build.sh: compiling 45% at 12:31 (23 min)`.
+- At the end it checks the result. Some products also use files from `recipes/<NAME>/check/`: HDF5 and
+  CUPDATAMODEL build a small program against the new installation the way the DAQ uses them; CUPDAQ starts every
+  program and reads a sample configuration (no hardware needed).
+- When the checks pass, it saves the recipe next to the version:
+
+  ```
+  build.sh: /home/cupsoft/Products/CUPDAQ/V4.3.2.recipe.yml
+  build.sh:   built: recipes/CUPDAQ/V4.3.2.yml at commit 4b615872706f on cupdev0 at 2026-11-23T10:12:00+0900
+  build.sh: CUPDAQ V4.3.2 is ready (3.3M).
+  ```
+
+- `build.sh` loads the modulefiles of the recipe's `depends` and nothing else, so the build sees exactly what users
+  of the vlist get. Released dependencies use their fixed modulefiles.
+- A dependency that is **built but not released yet** (for example CUPDATAMODEL, built just before CUPDAQ) gets a
+  modulefile made from the template and its saved recipe, the same one `prod release` would write. Release both in
+  the same vlist. Build them in dependency order: CUPDATAMODEL, then CUPDAQ.
+
+**A version without a build script** (for example a vendor binary such as CAENHVWRAPPER): unpack it at the final
+path, then save its recipe yourself:
+
+```bash
+recipes/_common/save-recipe.py recipes/CAENHVWRAPPER/V6.7.yml
+```
+
+**You can build on another node** with the same OS (AlmaLinux 9) and the same path (`/home/cupsoft/Products`). Then
+copy the directory **and its saved recipe** to the server (`build.sh` prints the command), and change neither side
+afterwards:
+
+```bash
+rsync -a /home/cupsoft/Products/ROOT/V6.40.04_3.14.9 /home/cupsoft/Products/ROOT/V6.40.04_3.14.9.recipe.yml \
+      cupsoft@192.168.0.150:/scratch/cupsoft/Products/ROOT/
+```
+
+- Use the server's **real path**. On cupdev0, `/home/cupsoft/Products` is a symlink to `/scratch/cupsoft/Products`,
+  and the AlmaLinux 9 rsync (3.2.7-1.el9_8) refuses a destination that goes through a symlink ("Too many levels of
+  symbolic links"). Find the real path with `ssh cupsoft@192.168.0.150 readlink -f /home/cupsoft/Products`.
+- Write the build node into the recipe's `notes`.
 
 ### 5.3 Write a draft
 
@@ -289,6 +323,7 @@ Example output:
 release 4.1: 4 products
   PYTHON           V3.14.9                  frozen, verified                   module PYTHON/V3.14.9
   ROOT             V6.40.06_3.14.9          staging -> frozen, 8660 entries    module ROOT/V6.40.06_3.14.9 (new)
+      note: recipe ROOT/V6.40.06_3.14.9.recipe.yml (recipes/ROOT/V6.40.06_3.14.9.yml at commit … on cupdev0 at …)
   HDF5             V2.2.0                   frozen, verified                   module HDF5/V2.2.0
   GEANT4           V11.4.3                  frozen, verified                   module GEANT4/V11.4.3
 vlist hash sha256:…
@@ -298,9 +333,10 @@ What `prod release` does:
 
 1. Frozen versions: checks that they still match their manifest.
 2. Staging versions: checks them (absolute or broken symlinks, special files, ...) and computes the manifest.
-3. Makes the fixed modulefiles (keeps existing ones) and checks the dependencies within the vlist.
-4. Locks the version directories, writes manifests, modulefiles and the vlist modulefile, and **writes the vlist
-   last**. The draft is deleted.
+3. Makes the fixed modulefiles (keeps existing ones) and checks the dependencies within the vlist. The recipe is
+   the one saved next to the version (`note: recipe …` shows it); a version without one uses the tool's recipe.
+4. Locks the version directories and their saved recipes, writes manifests, modulefiles and the vlist modulefile,
+   and **writes the vlist last**. The draft is deleted.
 
 It reports all problems at once. Fix them and run again. Progress goes to stderr, the summary to stdout;
 `prod -q release …` turns off both.
@@ -416,6 +452,8 @@ History: `Products/.prod/state/history.jsonl` (one line per release, withdraw, v
 - **Don't change or delete released version directories, manifests, modulefiles or vlists.** The lock (`a-w`) only
   prevents accidents; `chmod` can undo it. If you change them, every client's sync and verify fails.
 - **Don't reuse a released vlist name.** Fix mistakes with a new name and a withdrawal.
+- Don't edit a saved recipe (`<VERSION>.recipe.yml`) by hand. Fix the recipe in the repository and run `build.sh`
+  (or `save-recipe.py`) again.
 - Don't run `prod sync` on the server (it refuses: role is server).
 - Don't run `prod` or `install.sh` as root (they refuse). Root is only for `postinstall.sh`.
 
@@ -442,7 +480,7 @@ History: `Products/.prod/state/history.jsonl` (one line per release, withdraw, v
 | `ROOT V… needs PYTHON V…, which is not in this vlist` | Add the product from the recipe's `depends` to the vlist |
 | `… which must come before it in the list` | Move the dependency up in the list |
 | `ROOT V… is frozen but differs from its manifest: …` | A released version changed on the server. Find out who and why |
-| `no recipe .../recipes/ROOT/V….yml` | Add the recipe and upgrade the tool (5.2) |
+| `no recipe: neither …/ROOT/V….recipe.yml nor …/recipes/ROOT/V….yml exists` | Build it with `build.sh`, or run `save-recipe.py` (5.2) |
 | `no modulefile template …/template.tcl` | New product: add a template (5.6) |
 | `--module-rev …: there is no fixed modulefile to revise yet` | The version was never released. Release without `--module-rev` |
 | `another prod is running on this node; try again later` | Wait for the other `prod` to finish |
