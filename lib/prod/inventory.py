@@ -1,4 +1,4 @@
-"""`prod list`, `prod remove`, `prod gc`.
+"""`prod list`, `prod remove`, `prod gc` (on clients and on the server).
 
 What prod manages under Products: `.prod/`, `vlist/<name>.yml|.withdrawn`, `vlist/drafts/` (server),
 `modulefiles/`, and per product `<VER>/`, `<VER>.manifest`, `<VER>.buildinfo`, `<VER>.recipe.yml` for versions
@@ -12,7 +12,7 @@ from typing import Dict, List, Optional
 
 from . import fsutil, manifest, state, transfer
 from . import vlist as vlist_mod
-from .errors import FormatError
+from .errors import CheckFailed, FormatError
 from .verify import frozen_versions, installed_vlists, read_withdrawn
 
 
@@ -126,19 +126,41 @@ def listing(paths, cfg, *, tool, remote=False):
     return lst
 
 
-def remove(paths, cfg, names, *, tool):
-    """Take vlists off this node. The trusted records stay."""
-    cfg.require_role("client", "remove")
+def _vlist_files(paths, name):
+    return [p for p in (paths.vlist_file(name), paths.withdrawn_file(name), paths.bundle_file(name))
+            if os.path.lexists(p)]
+
+
+def remove(paths, cfg, names, *, tool, yes=False):
+    """Take vlists off this node and return the files that were (or, on the server without yes, would be)
+    deleted. Versions stay; `prod gc` deletes those no other vlist uses.
+
+    client: removes the vlists at once. The trusted records stay, so a later sync is still checked against
+            the first one.
+    server: deletes the releases, only with yes. The name can then be released again, so do this only for a
+            vlist no node has synced (a node that has would stop with "the server's vlist differs").
+            Refused for a vlist that another withdrawn vlist names as its replacement.
+    """
+    server = cfg.role == "server"
     with state.lock(paths, exclusive=True):
         for name in names:
             vlist_mod.check_name(name)
             if not os.path.exists(paths.vlist_file(name)):
-                raise FormatError(f"vlist '{name}' is not on this node")
+                raise FormatError(f"vlist '{name}' is not {'released' if server else 'on this node'}")
+        if server:
+            for other in installed_vlists(paths):
+                rec = read_withdrawn(paths.withdrawn_file(other))
+                if other not in names and rec and rec["replaced_by"] in names:
+                    raise CheckFailed(f"vlist '{other}' was withdrawn in favour of '{rec['replaced_by']}'; "
+                                      f"remove '{other}' too, or keep '{rec['replaced_by']}'")
+        files = [p for name in names for p in _vlist_files(paths, name)]
+        if server and not yes:
+            return files
         for name in names:
-            for path in (paths.vlist_file(name), paths.withdrawn_file(name), paths.bundle_file(name)):
-                if os.path.lexists(path):
-                    os.unlink(path)
+            for path in _vlist_files(paths, name):
+                os.unlink(path)  # a locked file goes: only its directory must be writable
             state.record(paths, tool, "remove", vlist=name, result="ok")
+        return files
 
 
 def gc_candidates(paths):
@@ -170,7 +192,8 @@ def gc_candidates(paths):
 
 
 def gc(paths, cfg, *, tool, yes=False):
-    cfg.require_role("client", "gc")
+    """Delete what gc_candidates lists (only with yes). On the server this deletes released versions that no
+    vlist uses any more, after `prod remove`; staging versions (no manifest) are never touched."""
     with state.lock(paths, exclusive=True):
         candidates = gc_candidates(paths)
         if yes:

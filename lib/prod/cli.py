@@ -65,10 +65,12 @@ def _parser():
     sub.add_parser("list", help="show what is installed on this node").add_argument(
         "--remote", action="store_true", help="also list the vlists on the products server")
 
-    rm = sub.add_parser("remove", help="take vlists off this node (client)")
+    rm = sub.add_parser("remove", help="take vlists off this node; on the server: delete releases")
     rm.add_argument("names", nargs="+", metavar="vlist")
+    rm.add_argument("--yes", action="store_true",
+                    help="server: really delete the releases (default: only show)")
 
-    g = sub.add_parser("gc", help="delete what no installed vlist uses (client)")
+    g = sub.add_parser("gc", help="delete versions and modulefiles that no vlist uses")
     g.add_argument("--yes", action="store_true", help="really delete (default: only show)")
 
     r = sub.add_parser("release", help="release a vlist from its draft (server)")
@@ -241,8 +243,14 @@ def main(argv=None, tool_root=None, products=None):
             else:
                 _print_list(lst, out)
         elif ns.command == "remove":
-            inventory.remove(paths, cfg, ns.names, tool=tool)
-            print(f"removed {', '.join(ns.names)} (prod gc deletes versions no longer used)", file=out)
+            files = inventory.remove(paths, cfg, ns.names, tool=tool, yes=ns.yes)
+            if cfg.role == "server" and not ns.yes:
+                for f in files:
+                    print(f"  {os.path.relpath(f, paths.products)}", file=out)
+                print(f"{len(files)} file(s) would be deleted; run 'prod remove {' '.join(ns.names)} --yes' "
+                      "to delete them (versions stay; prod gc deletes those no vlist uses)", file=out)
+            else:
+                print(f"removed {', '.join(ns.names)} (prod gc deletes versions no longer used)", file=out)
         elif ns.command == "gc":
             candidates = inventory.gc(paths, cfg, tool=tool, yes=ns.yes)
             for c in candidates:

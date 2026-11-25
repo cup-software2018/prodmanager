@@ -1,4 +1,10 @@
 format: "1"
 product: "GEANT4"
 version: "V11.1.3"
-notes: "Existing binary built before prodmanager; registered as is, without rebuilding. What could be extracted is in its buildinfo."
+source:
+  url: "https://gitlab.cern.ch/geant4/geant4/-/archive/v11.1.3/geant4-v11.1.3.tar.gz"
+build: |
+  recipes/GEANT4/build.sh 11.1.3
+    cmake -DCMAKE_INSTALL_PREFIX=/home/cupsoft/Products/GEANT4/V11.1.3 $(options in recipes/GEANT4/V11.1.3.options)
+    cmake --build; cmake --install   (GEANT4_INSTALL_DATA downloads the data sets into share/Geant4/data)
+notes: "Rebuilt with the features of the binary built before prodmanager (multithreaded, GDML, Qt5 with Qt3D, OpenGL X11, builtin CLHEP/zlib/PTL, data in the prefix). That binary had been configured with the prefix /scratch/cupsoft/Products/GEANT4/V11.1.3, which showed in geant4-config --cflags."

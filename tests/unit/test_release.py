@@ -6,9 +6,9 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 
-from prod import cli, config, fsutil, manifest, release, state
+from prod import cli, config, fsutil, inventory, manifest, release, state
 from prod import vlist as vlist_mod
-from prod.errors import CheckFailed, EnvError, UsageError
+from prod.errors import CheckFailed, EnvError, FormatError, UsageError
 from prod.hashing import sha256_file
 
 TOOL = "v0.1-test"
@@ -350,6 +350,56 @@ class TestWithdraw(FakeServer):
             self.withdraw("3.0", reason="  ")
 
 
+class TestRemoveOnServer(FakeServer):
+    def setUp(self):
+        super().setUp()
+        self.draft("3.0", [("PYTHON", "V3.11.14"), ("ROOT", "V6.32.20_3.11.14")])
+        self.release("3.0")
+        self.draft("3.1", [("PYTHON", "V3.11.14"), ("HDF5", "V1.14.2")])
+        self.release("3.1")
+
+    def remove(self, *names, yes=True):
+        return inventory.remove(self.paths, self.cfg, list(names), tool=TOOL, yes=yes)
+
+    def rel(self, paths):
+        return {os.path.relpath(p, self.products) for p in paths}
+
+    def test_remove_and_gc(self):
+        files = self.remove("3.0", yes=False)  # without yes: only shows
+        self.assertEqual(self.rel(files), {"vlist/3.0.yml", "modulefiles/vlist/3.0"})
+        self.assertTrue(os.path.exists(self.paths.vlist_file("3.0")))
+        self.remove("3.0")
+        for f in files:
+            self.assertFalse(os.path.lexists(f))
+        self.assertTrue(os.path.exists(self.paths.version_dir("ROOT", "V6.32.20_3.11.14")))  # versions stay
+        # gc: only what 3.0 alone used; PYTHON stays for 3.1, and a staging version is never a candidate
+        self.version("HDF5", "V2.2.0", {"lib/libhdf5.so": b"staging"})
+        cands = self.rel(inventory.gc_candidates(self.paths))
+        self.assertEqual(cands, {"ROOT/V6.32.20_3.11.14", "ROOT/V6.32.20_3.11.14.manifest",
+                                 "ROOT/V6.32.20_3.11.14.buildinfo", "modulefiles/ROOT/V6.32.20_3.11.14"})
+        inventory.gc(self.paths, self.cfg, tool=TOOL, yes=True)
+        self.assertFalse(os.path.exists(self.paths.version_dir("ROOT", "V6.32.20_3.11.14")))
+        self.assertTrue(os.path.exists(self.paths.version_dir("HDF5", "V2.2.0")))
+        self.assertEqual([e["command"] for e in state.read_history(self.paths)][-2:], ["remove", "gc"])
+        # the name is free again
+        self.draft("3.0", [("PYTHON", "V3.11.14")])
+        self.release("3.0")
+
+    def test_withdrawn(self):
+        release.withdraw(self.paths, self.cfg, "3.0", tool=TOOL, reason="x", replaced_by="3.1")
+        with self.assertRaisesRegex(CheckFailed, "withdrawn in favour of '3.1'"):
+            self.remove("3.1")
+        self.assertTrue(os.path.exists(self.paths.vlist_file("3.1")))
+        self.assertIn("vlist/3.0.withdrawn", self.rel(self.remove("3.0", "3.1", yes=False)))
+        self.remove("3.0", "3.1")
+        self.assertEqual(os.listdir(self.paths.vlist), ["drafts"])
+
+    def test_errors(self):
+        with self.assertRaisesRegex(FormatError, "not released"):
+            self.remove("3.0", "9.9")
+        self.assertTrue(os.path.exists(self.paths.vlist_file("3.0")))  # nothing removed when one name is bad
+
+
 class TestCli(FakeServer):
     def run_cli(self, *argv):
         out, err = io.StringIO(), io.StringIO()
@@ -370,6 +420,25 @@ class TestCli(FakeServer):
         self.assertIn("already released", err)
         code, out, _ = self.run_cli("withdraw", "3.0", "--reason", "test")
         self.assertEqual((code, out.strip()), (0, "withdrew 3.0"))
+
+    def test_remove(self):
+        self.draft("3.0", [("PYTHON", "V3.11.14")])
+        self.run_cli("release", "3.0")
+        code, out, _ = self.run_cli("remove", "3.0")
+        self.assertEqual(code, 0)
+        self.assertIn("vlist/3.0.yml", out)
+        self.assertIn("would be deleted; run 'prod remove 3.0 --yes'", out)
+        self.assertTrue(os.path.exists(self.paths.vlist_file("3.0")))
+        code, out, _ = self.run_cli("remove", "3.0", "--yes")
+        self.assertEqual(code, 0)
+        self.assertIn("removed 3.0", out)
+        self.assertFalse(os.path.exists(self.paths.vlist_file("3.0")))
+        code, out, _ = self.run_cli("gc", "--yes")
+        self.assertEqual(code, 0)
+        self.assertFalse(os.path.exists(self.paths.version_dir("PYTHON", "V3.11.14")))
+        code, _, err = self.run_cli("remove", "3.0", "--yes")
+        self.assertEqual(code, 1)
+        self.assertIn("not released", err)
 
     def test_usage(self):
         self.assertEqual(self.run_cli("release")[0], 2)

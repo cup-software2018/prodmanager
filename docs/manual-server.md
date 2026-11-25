@@ -12,7 +12,7 @@ as **cupsoft** unless a step says root. For nodes, see the [client manual](manua
 5. [Release a new vlist](#5-release-a-new-vlist)
 6. [Register an old vlist (once)](#6-register-an-old-vlist-once)
 7. [Fix a released modulefile (revision)](#7-fix-a-released-modulefile-revision)
-8. [Withdraw a bad release](#8-withdraw-a-bad-release)
+8. [Withdraw or remove a bad release](#8-withdraw-or-remove-a-bad-release)
 9. [Checks](#9-checks)
 10. [Don'ts](#10-donts)
 11. [Troubleshooting](#11-troubleshooting)
@@ -311,7 +311,7 @@ products:                          # list order = load order: dependencies first
 ```
 
 - The file name is the vlist name. Use only `[A-Za-z0-9._-]`. **A name is never used twice**, including withdrawn
-  names and old `.vlist` names.
+  names and old `.vlist` names. (Only a removed release that no node had synced frees its name, 8.2.)
 - Convention: `[<purpose>_]<major>.<minor>` (`4.1`, `daq_3.0`). Bump the major when the Python or ROOT generation
   changes.
 
@@ -423,7 +423,9 @@ prod release 4.0.1 --module-rev ROOT/V6.40.04_3.14.9
 - The old vlist (`4.0`) keeps its old modulefile.
 - Without `--module-rev`, a release uses the highest revision of each version.
 
-## 8. Withdraw a bad release
+## 8. Withdraw or remove a bad release
+
+### 8.1 Withdraw
 
 A release is never edited. Withdraw it and release a fixed one under a new name:
 
@@ -436,6 +438,29 @@ prod withdraw 4.1 --reason "Geant4 data sets incomplete" --replaced-by 4.1.1
 - A new `prod sync 4.1` on a client refuses ("use 4.1.1 instead"); `--force` installs it anyway.
 - Where it is already installed, `setup_prod.sh 4.1` and `prod verify` show a warning.
 - The server keeps the withdrawn files (it does not know who still uses them).
+
+### 8.2 Remove (only if no node has synced it)
+
+A release that no node has synced yet (for example one you found wrong while testing it on the server) can be
+removed, and its name used again:
+
+```bash
+prod remove 4.1              # only shows what would be deleted
+prod remove 4.1 --yes        # deletes vlist/4.1.yml, vlist/4.1.withdrawn and modulefiles/vlist/4.1
+prod gc                      # shows the versions and modulefiles that no vlist uses any more
+prod gc --yes                # deletes them
+```
+
+- `prod remove` deletes only the vlist, never a version. `prod gc` then deletes the released versions (directory,
+  manifest, buildinfo, saved recipe) and fixed modulefiles that no remaining vlist uses. Versions that another
+  vlist uses, staging versions and files that `prod` does not manage stay.
+- To keep the versions for a later vlist (to skip rebuilding them), don't run `prod gc`. They stay frozen and
+  `prod verify` keeps checking them.
+- **If a node has synced it, withdraw it instead (8.1).** A node that synced the old release stops with "the
+  server's vlist differs" if the name is released again; on that node, run `prod remove 4.1` and `prod gc --yes`.
+- For a migrated vlist, the old `vlist/<name>.vlist` stays, so `prod release --migrate <name>` can register it again.
+- Refused if another vlist was withdrawn in favour of this one (`--replaced-by`): remove both, or keep it.
+- Each removal is recorded in `history.jsonl`.
 
 ## 9. Checks
 
@@ -454,9 +479,10 @@ History: `Products/.prod/state/history.jsonl` (one line per release, withdraw, v
 
 ## 10. Don'ts
 
-- **Don't change or delete released version directories, manifests, modulefiles or vlists.** The lock (`a-w`) only
-  prevents accidents; `chmod` can undo it. If you change them, every client's sync and verify fails.
-- **Don't reuse a released vlist name.** Fix mistakes with a new name and a withdrawal.
+- **Don't change or delete released version directories, manifests, modulefiles or vlists by hand.** The lock
+  (`a-w`) only prevents accidents; `chmod` can undo it. If you change them, every client's sync and verify fails.
+  To delete a release, use `prod remove` and `prod gc` (8.2).
+- **Don't reuse the name of a vlist that a node has synced.** Fix mistakes with a new name and a withdrawal.
 - Don't edit a saved recipe (`<VERSION>.recipe.yml`) by hand. Fix the recipe in the repository and run `build.sh`
   (or `save-recipe.py`) again.
 - Don't run `prod sync` on the server (it refuses: role is server).
@@ -480,7 +506,7 @@ History: `Products/.prod/state/history.jsonl` (one line per release, withdraw, v
 | Message | What to do |
 |---|---|
 | `no draft .../vlist/drafts/4.1.yml; write it first` | Write the draft (5.3) |
-| `vlist '4.1' is already released; names are never reused` | Pick another name. To fix a release: withdraw + new name |
+| `vlist '4.1' is already released; names are never reused` | Pick another name. To fix a release: withdraw + new name (or remove it if no node has synced it, 8.2) |
 | `'3.0' is a legacy vlist name; use --migrate to register it` | It is an old `.vlist` name. Register it with `--migrate` |
 | `ROOT V… needs PYTHON V…, which is not in this vlist` | Add the product from the recipe's `depends` to the vlist |
 | `… which must come before it in the list` | Move the dependency up in the list |
@@ -491,4 +517,5 @@ History: `Products/.prod/state/history.jsonl` (one line per release, withdraw, v
 | `another prod is running on this node; try again later` | Wait for the other `prod` to finish |
 | `… format 2 is newer than this tool supports (1); update the tool` | Upgrade the tool |
 | `'sync' runs only where role is 'client' (this node: 'server')` | Don't sync on the server |
+| `vlist '4.0' was withdrawn in favour of '4.1'; remove '4.0' too, or keep '4.1'` | `prod remove 4.0 4.1 --yes`, or keep 4.1 (8.2) |
 | `…/PRODUCTS is missing (installed by an older install.sh); run install.sh again` | Run `./install.sh --force` from the current tag |
