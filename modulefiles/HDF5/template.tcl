@@ -1,6 +1,6 @@
 #%Module
 @HEADER@
-# HDF5. Legacy: HDF5/setup_HDF5.sh, whose last line put $PATH into CMAKE_PREFIX_PATH (fixed here).
+# HDF5.
 module-whatis "HDF5 @VERSION@"
 conflict HDF5
 @DEPENDS@

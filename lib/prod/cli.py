@@ -1,4 +1,4 @@
-"""prod command line. Commands are implemented step by step."""
+"""prodman command line. Commands are implemented step by step."""
 
 import argparse
 import json
@@ -8,7 +8,6 @@ import sys
 
 from . import config, inventory, release, state
 from . import progress as progress_mod
-from . import doctor as doctor_mod
 from . import sync as sync_mod
 from . import verify as verify_mod
 from .errors import CheckFailed, ProdError, UsageError
@@ -34,60 +33,57 @@ def tool_version(tool_root):
 
 class _Parser(argparse.ArgumentParser):
     def error(self, message):
-        raise UsageError(f"{message}\nrun 'prod help' for usage")
+        raise UsageError(f"{message}\nrun 'prodman help' for usage")
+
+
+def _common_options(parser, default):
+    parser.add_argument("-q", "--quiet", action="store_true", default=default,
+                        help="print only errors (no progress lines)")
+    parser.add_argument("--json", action="store_true", default=default,
+                        help="machine-readable output (list, verify)")
 
 
 def _parser():
-    p = _Parser(prog="prod", description="prodmanager management tool")
+    p = _Parser(prog="prodman", description="prodmanager management tool")
     p.add_argument("--version", action="store_true", help="print the tool version and exit")
-    p.add_argument("-q", "--quiet", action="store_true", help="print only errors (no progress lines)")
-    p.add_argument("--json", action="store_true", help="machine-readable output (list, verify)")
+    _common_options(p, False)
+    # the same options after the command (prodman list --json); SUPPRESS keeps a value given before it
+    common = _Parser(add_help=False)
+    _common_options(common, argparse.SUPPRESS)
     sub = p.add_subparsers(dest="command", metavar="<command>", parser_class=_Parser)
 
-    s = sub.add_parser("sync", help="install vlists from the products server (client)")
-    s.add_argument("names", nargs="*", metavar="vlist")
-    s.add_argument("--installed", action="store_true", help="sync every vlist already on this node again")
-    s.add_argument("--dry-run", action="store_true", help="check and show what would be transferred")
-    s.add_argument("--force", action="store_true", help="install a withdrawn vlist anyway")
-    s.add_argument("--retrust", action="store_true",
-                   help="accept a server vlist that differs from the one first synced")
+    def command(name, **kw):
+        return sub.add_parser(name, parents=[common], **kw)
 
-    v = sub.add_parser("verify", help="check installed vlists against their manifests")
+    s = command("sync", help="install vlists from the products server (client)")
+    s.add_argument("names", nargs="+", metavar="vlist")
+    s.add_argument("--dry-run", action="store_true", help="check and show what would be transferred")
+
+    rs = command("resync", help="sync every vlist on this node again (client)")
+    rs.add_argument("--dry-run", action="store_true", help="check and show what would be transferred")
+
+    v = command("verify", help="check installed vlists against their manifests; lock writable files again")
     v.add_argument("names", nargs="*", metavar="vlist")
-    v.add_argument("--quick", action="store_true", help="skip content hashes")
-    v.add_argument("--fix-perms", action="store_true", help="lock writable files again")
+    v.add_argument("--quick", action="store_true", help="skip content hashes and the shared library check")
     v.add_argument("--remote", action="store_true", help="also compare with the server's vlist (client)")
 
-    d = sub.add_parser("doctor", help="check the tool, system packages, modules and shared libraries")
-    d.add_argument("names", nargs="*", metavar="vlist")
-    d.add_argument("--quick", action="store_true", help="skip the ldd check")
-
-    sub.add_parser("list", help="show what is installed on this node").add_argument(
+    command("list", help="show the releases on this node: vlists, released and not released versions").add_argument(
         "--remote", action="store_true", help="also list the vlists on the products server")
 
-    rm = sub.add_parser("remove", help="take vlists off this node; on the server: delete releases")
-    rm.add_argument("names", nargs="+", metavar="vlist")
-    rm.add_argument("--yes", action="store_true",
-                    help="server: really delete the releases (default: only show)")
+    rm = command("remove", help="delete vlists or product versions (NAME/VERSION) from this node")
+    rm.add_argument("names", nargs="+", metavar="vlist|NAME/VERSION")
+    rm.add_argument("--yes", action="store_true", help="really delete (default: only show)")
 
-    g = sub.add_parser("gc", help="delete versions and modulefiles that no vlist uses")
+    g = command("gc", help="delete versions and modulefiles that no vlist uses")
     g.add_argument("--yes", action="store_true", help="really delete (default: only show)")
 
-    r = sub.add_parser("release", help="release a vlist from its draft (server)")
+    r = command("release", help="release a vlist from its draft (server)")
     r.add_argument("name")
     r.add_argument("--check", action="store_true", help="check and report only; write nothing")
-    r.add_argument("--migrate", action="store_true", help="register the legacy <name>.vlist")
-    r.add_argument("--module-rev", action="append", default=[], metavar="NAME/VERSION",
-                   help="create a new revision of the fixed modulefile of NAME/VERSION")
-
-    w = sub.add_parser("withdraw", help="withdraw a released vlist (server)")
-    w.add_argument("name")
-    w.add_argument("--reason", required=True)
-    w.add_argument("--replaced-by", metavar="NAME")
 
     for name in NOT_YET:
-        sub.add_parser(name, help="(not implemented yet)").add_argument("args", nargs="*")
-    sub.add_parser("help", help="show this help")
+        command(name, help="(not implemented yet)").add_argument("args", nargs="*")
+    command("help", help="show this help")
     return p
 
 
@@ -111,15 +107,11 @@ def _print_release(rp, check, out):
         print(f"  warning: {w}", file=out)
     if check:
         print("check only: nothing was written", file=out)
-    else:
-        print(f"vlist hash {rp.vlist_hash}", file=out)
 
 
 def _print_sync(results, out):
     for r in results:
-        tags = [t for t, on in (("first sync", r.first_sync), ("re-trusted", r.retrusted),
-                                ("WITHDRAWN", r.withdrawn is not None), ("dry run", r.dry_run)) if on]
-        print(f"sync {r.name} {r.vlist_hash}" + (f" ({', '.join(tags)})" if tags else ""), file=out)
+        print(f"sync {r.name}" + (" (dry run)" if r.dry_run else ""), file=out)
         for x in r.versions:
             print(f"  {x.name:<16} {x.version:<24} {x.action}", file=out)
         for w in r.warnings:
@@ -131,19 +123,11 @@ def _print_sync(results, out):
 def _print_verify(reports, out):
     for r in reports:
         status = "ok" if r.ok else f"{len(r.errors)} problem(s)"
-        print(f"{r.name:<12} {status:<14} {r.vlist_hash or ''}", file=out)
+        print(f"{r.name:<12} {status}", file=out)
         for e in r.errors:
             print(f"  error:   {e}", file=out)
         for w in r.warnings:
             print(f"  warning: {w}", file=out)
-
-
-def _print_doctor(checks, out):
-    marks = {"ok": "ok  ", "warn": "WARN", "fail": "FAIL"}
-    for c in checks:
-        print(f"{marks[c.level]}  {c.name:<16} {c.summary}", file=out)
-        for d in c.details:
-            print(f"      {d}", file=out)
 
 
 def _print_list(lst, out):
@@ -153,13 +137,7 @@ def _print_list(lst, out):
     if not lst.vlists:
         print("  (none)", file=out)
     for v in lst.vlists:
-        flags = []
-        if v["trusted"] is False:
-            flags.append("HASH DIFFERS FROM FIRST SYNC")
-        if v["withdrawn"]:
-            flags.append("withdrawn")
-        print(f"  {v['name']:<12} {v['hash'][:19]}…  {v['description']}" + (f"  [{', '.join(flags)}]" if flags else ""),
-              file=out)
+        print(f"  {v['name']:<12} {v['description']}", file=out)
         if v["last_sync"] or v["last_verify"]:
             print(f"  {'':<12} first sync {v['first_sync'] or '-'}, last sync {v['last_sync'] or '-'}, "
                   f"last verify {v['last_verify'] or '-'}", file=out)
@@ -167,21 +145,20 @@ def _print_list(lst, out):
     if not lst.versions:
         print("  (none)", file=out)
     for x in lst.versions:
-        used = ", ".join(x["used_by"]) if x["used_by"] else "unused (prod gc)"
+        used = ", ".join(x["used_by"]) if x["used_by"] else "unused (prodman gc)"
         print(f"  {x['name']:<16} {x['version']:<24} {used}", file=out)
-    if lst.unmanaged:
-        print("not managed by prod:", file=out)
-        for u in lst.unmanaged:
-            print(f"  {u}" + ("  (whole directory, no versions in it)" if u.endswith("/") else ""), file=out)
+    if lst.not_released:
+        print("not released:", file=out)
+        for x in lst.not_released:
+            print(f"  {x['name']:<16} {x['version']}", file=out)
     if lst.leftovers:
-        print("leftovers of interrupted syncs (prod gc):", file=out)
+        print("leftovers of interrupted syncs (prodman gc):", file=out)
         for u in lst.leftovers:
             print(f"  {u}", file=out)
-    print(f"system packages: {'applied, see ' + lst.packages if lst.packages else 'no record'}", file=out)
     if lst.remote is not None:
         print("on the products server:", file=out)
         for v in lst.remote:
-            print(f"  {v['name']}" + ("  [withdrawn]" if v["withdrawn"] else ""), file=out)
+            print(f"  {v['name']}", file=out)
 
 
 # --------------------------------------------------------------------------- main
@@ -194,7 +171,7 @@ def main(argv=None, tool_root=None, products=None):
     try:
         ns = parser.parse_args(argv)
         if ns.version:
-            print(f"prod {tool_version(tool_root)}")
+            print(f"prodman {tool_version(tool_root)}")
             return 0
         if ns.command in (None, "help"):
             parser.print_help()
@@ -208,13 +185,13 @@ def main(argv=None, tool_root=None, products=None):
         out = open(os.devnull, "w") if ns.quiet else sys.stdout
         progress = progress_mod.Progress(sys.stderr, quiet=ns.quiet)
 
-        if ns.command == "sync":
-            results = sync_mod.sync(paths, cfg, ns.names, tool=tool, dry_run=ns.dry_run, force=ns.force,
-                                    retrust=ns.retrust, installed=ns.installed, progress=progress)
+        if ns.command in ("sync", "resync"):
+            results = sync_mod.sync(paths, cfg, getattr(ns, "names", []), tool=tool, dry_run=ns.dry_run,
+                                    resync=ns.command == "resync", check_environment=True, progress=progress)
             _print_sync(results, out)
         elif ns.command == "verify":
-            reports = verify_mod.verify(paths, cfg, ns.names, quick=ns.quick, fix_perms=ns.fix_perms,
-                                        remote=ns.remote, progress=progress)
+            reports = verify_mod.verify(paths, cfg, ns.names, quick=ns.quick, remote=ns.remote,
+                                        check_environment=True, progress=progress)
             ok = all(r.ok for r in reports)
             state.record(paths, tool, "verify", vlists=[r.name for r in reports],
                          result="ok" if ok else "error", quick=ns.quick)
@@ -226,16 +203,6 @@ def main(argv=None, tool_root=None, products=None):
                 print("no vlists installed", file=out)
             if not ok:
                 return CheckFailed.exit_code
-        elif ns.command == "doctor":
-            checks = doctor_mod.doctor(paths, cfg, ns.names, tool_root=tool_root, tool=tool, run_ldd=not ns.quick)
-            failed = [c.name for c in checks if c.level == "fail"]
-            state.record(paths, tool, "doctor", result="error" if failed else "ok", failed=failed)
-            if ns.json:
-                print(json.dumps([c.as_dict() for c in checks], ensure_ascii=False, indent=2))
-            else:
-                _print_doctor(checks, out)
-            if failed:
-                return CheckFailed.exit_code
         elif ns.command == "list":
             lst = inventory.listing(paths, cfg, tool=tool, remote=ns.remote)
             if ns.json:
@@ -244,13 +211,13 @@ def main(argv=None, tool_root=None, products=None):
                 _print_list(lst, out)
         elif ns.command == "remove":
             files = inventory.remove(paths, cfg, ns.names, tool=tool, yes=ns.yes)
-            if cfg.role == "server" and not ns.yes:
-                for f in files:
-                    print(f"  {os.path.relpath(f, paths.products)}", file=out)
-                print(f"{len(files)} file(s) would be deleted; run 'prod remove {' '.join(ns.names)} --yes' "
-                      "to delete them (versions stay; prod gc deletes those no vlist uses)", file=out)
+            for f in files:
+                print(f"  {os.path.relpath(f, paths.products)}", file=out)
+            if ns.yes:
+                print(f"removed {', '.join(ns.names)}", file=out)
             else:
-                print(f"removed {', '.join(ns.names)} (prod gc deletes versions no longer used)", file=out)
+                print(f"{len(files)} item(s) would be deleted; run 'prodman remove {' '.join(ns.names)} --yes' "
+                      "to delete them", file=out)
         elif ns.command == "gc":
             candidates = inventory.gc(paths, cfg, tool=tool, yes=ns.yes)
             for c in candidates:
@@ -260,15 +227,12 @@ def main(argv=None, tool_root=None, products=None):
             elif ns.yes:
                 print(f"deleted {len(candidates)} item(s)", file=out)
             else:
-                print(f"{len(candidates)} item(s) would be deleted; run 'prod gc --yes' to delete them", file=out)
+                print(f"{len(candidates)} item(s) would be deleted; run 'prodman gc --yes' to delete them", file=out)
         elif ns.command == "release":
             rp = release.release(paths, cfg, ns.name, tool_root=tool_root, tool=tool, check=ns.check,
-                                 migrate=ns.migrate, module_revs=ns.module_rev, progress=progress)
+                                 check_environment=True, progress=progress)
             _print_release(rp, ns.check, out)
-        elif ns.command == "withdraw":
-            release.withdraw(paths, cfg, ns.name, tool=tool, reason=ns.reason, replaced_by=ns.replaced_by)
-            print(f"withdrew {ns.name}", file=out)
         return 0
     except ProdError as e:
-        print(f"prod: {e}", file=sys.stderr)
+        print(f"prodman: {e}", file=sys.stderr)
         return e.exit_code

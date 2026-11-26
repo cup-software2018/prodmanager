@@ -1,6 +1,6 @@
-"""Local state under `<Products>/.prod/state/`: lock, history, trusted vlist hashes.
+"""Local state under `<Products>/.prod/state/`: lock, history.
 
-Commands run by an account other than the owner (e.g. amore2 running `prod verify`) cannot write here;
+Commands run by an account other than the owner (e.g. amore2 running `prodman verify`) cannot write here;
 for them history is skipped and the lock is taken on a read-only descriptor if the lock file exists.
 """
 
@@ -14,8 +14,7 @@ import pwd
 import socket
 import tempfile
 
-from .errors import FormatError, LockBusy
-from .hashing import is_hash
+from .errors import LockBusy
 
 
 def now_iso():
@@ -111,21 +110,3 @@ def read_history(paths):
         pass
     return events
 
-
-def get_trusted(paths, name):
-    """The vlist hash recorded at the first sync of vlist name, or None."""
-    try:
-        with open(os.path.join(paths.trusted, name + ".sha256"), encoding="ascii") as f:
-            value = f.read().strip()
-    except FileNotFoundError:
-        return None
-    if not is_hash(value):
-        # Never treat a damaged record as "first sync": that would silently re-trust the server.
-        raise FormatError(f"trusted hash record for vlist '{name}' is damaged; inspect {paths.trusted}")
-    return value
-
-
-def set_trusted(paths, name, value):
-    if not is_hash(value):
-        raise ValueError(f"not a hash: {value}")
-    atomic_write(os.path.join(paths.trusted, name + ".sha256"), (value + "\n").encode("ascii"))

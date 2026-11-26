@@ -1,0 +1,11 @@
+product: "PYTHON"
+version: "V3.11.14"
+source:
+  url: "https://www.python.org/ftp/python/3.11.14/Python-3.11.14.tar.xz"
+# configure options; build.sh adds --prefix, --libdir and LDFLAGS (rpath to <prefix>/lib)
+options:
+  - "--enable-shared"
+  - "--enable-optimizations"
+  - "--with-ensurepip=install"
+  # the libmpdec bundled with Python: nodes need no mpdecimal package
+  - "--with-system-libmpdec=no"

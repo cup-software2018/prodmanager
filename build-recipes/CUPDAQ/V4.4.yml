@@ -1,0 +1,15 @@
+product: "CUPDAQ"
+version: "V4.4"
+# depends: the programs and libraries link ROOT, HDF5 (libhdf5) and CUPDATAMODEL (RawObjs, HDF5Utils)
+depends:
+  - {name: "ROOT", version: "V6.32.20_3.11.14"}
+  - {name: "HDF5", version: "V1.14.2"}
+  - {name: "CUPDATAMODEL", version: "V1.4"}
+source:
+  url: "https://github.com/cup-software2018/CUPDAQ.git"
+  tag: "v4.4"
+# libusb, yaml-cpp and zeromq come from the system (packages group daq)
+options:
+  - "-DCMAKE_BUILD_TYPE=Release"
+  # never let cmake call dnf or apt
+  - "-DCUPDAQ_AUTO_INSTALL_DEPENDENCIES=OFF"

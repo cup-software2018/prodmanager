@@ -1,6 +1,4 @@
-# Geant4 ("for GEANT4" in the legacy postinstall.sh). The legacy 'mesa-*' wildcard is written out as the
-# mesa packages actually installed on cupdev1 (2026-11-19).
-format: "1"
+# Geant4. The mesa packages are those installed on cupdev1 (2026-11-19).
 group: "geant4"
 description: "Geant4 runtime dependencies (XML, Qt5, OpenGL)"
 products: ["GEANT4"]

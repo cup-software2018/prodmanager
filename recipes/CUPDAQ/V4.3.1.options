@@ -1,7 +1,0 @@
-# cmake options of CUPDAQ V4.3.1, read by recipes/CUPDAQ/build.sh (one per line; '#' starts a comment).
-# The install prefix is added by build.sh. ROOT, HDF5 and CUPDATAMODEL come from the modulefiles of the recipe's
-# depends; libusb, yaml-cpp and zeromq from the system (packages group daq).
-#
--DCMAKE_BUILD_TYPE=Release
-# never let cmake call dnf or apt
--DCUPDAQ_AUTO_INSTALL_DEPENDENCIES=OFF

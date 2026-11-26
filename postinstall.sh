@@ -3,12 +3,12 @@
 #
 #   sudo /home/cupsoft/Products/.prod/current/share/postinstall.sh [--group G]... [--check]
 #
+# - Reads the package lists in <Products>/packages.
 # - Enables the repositories the groups need (crb, epel).
 # - Installs each group's packages in one dnf transaction; if that fails, retries them one by one so that
 #   only the packages that really fail are reported (one bad name no longer drops a whole group).
 #   'optional' packages are tried separately and only warned about.
-# - Prints a result table, logs everything to /var/log/prodmanager-postinstall.log, and writes the
-#   applied record <Products>/.prod/state/packages.yml (owned by the Products owner).
+# - Prints a result table, logs everything to /var/log/prodmanager-postinstall.log.
 # - Does not run 'dnf update'; updating the system is the administrator's separate decision.
 # - --check installs nothing: it shows what is installed, what would be installed, and what is not
 #   available in the enabled repositories.
@@ -41,21 +41,22 @@ if [ "$(id -u)" -ne 0 ] && [ "${PROD_ALLOW_NONROOT:-0}" != 1 ]; then
     die "run as root (sudo)"
 fi
 
-# Installed tool: <Products>/.prod/versions/<v>/share/postinstall.sh; repository checkout: <repo>/postinstall.sh
-if [ -d "$HERE/packages" ] && [ -d "$HERE/../lib/prod" ]; then
-    PKG_DIR="$HERE/packages"; LIB="$HERE/../lib"; TOOL_ROOT="$HERE/.."
-elif [ -d "$HERE/packages" ] && [ -d "$HERE/lib/prod" ]; then
-    PKG_DIR="$HERE/packages"; LIB="$HERE/lib"; TOOL_ROOT="$HERE"
-else
-    die "cannot find packages/ and lib/ next to $HERE"
-fi
-TOOL="$(cat "$TOOL_ROOT/VERSION" 2>/dev/null || echo "checkout")"
+# Installed tool: <Products>/.prod/versions/<v>/share/postinstall.sh, with the package lists in <Products>/packages
+# (edited on the server; on a client, the server's, fetched by prodman sync).
+# Repository checkout: <repo>/postinstall.sh with <repo>/packages.
 case "$HERE" in
-    */.prod/versions/*/share) PRODUCTS="${HERE%%/.prod/versions/*}" ;;
-    *) PRODUCTS="" ;;  # running from a checkout: no applied record
+    */.prod/versions/*/share)
+        PRODUCTS="${HERE%%/.prod/versions/*}"; LIB="$HERE/../lib"; TOOL_ROOT="$HERE/.."
+        PKG_DIR="$PRODUCTS/packages" ;;
+    *)
+        PRODUCTS=""; LIB="$HERE/lib"; TOOL_ROOT="$HERE"
+        PKG_DIR="$HERE/packages" ;;
 esac
+[ -d "$LIB/prod" ] || die "cannot find lib/prod for $HERE"
+[ -d "$PKG_DIR" ] || die "no package lists in $PKG_DIR (on a client, run 'prodman sync <vlist>' first)"
+TOOL="$(cat "$TOOL_ROOT/VERSION" 2>/dev/null || echo "checkout")"
 
-py() { /usr/bin/python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from prod.packages import _main; sys.exit(_main(sys.argv[2:]))' "$LIB" "$@"; }
+py() { /usr/bin/python3 -I -B -c 'import sys; sys.path.insert(0, sys.argv[1]); from prod.packages import _main; sys.exit(_main(sys.argv[2:]))' "$LIB" "$@"; }
 
 PLAN="$(py plan "$PKG_DIR" "${GROUPS_WANTED[@]}")" || die "cannot read the package lists in $PKG_DIR"
 
@@ -84,8 +85,6 @@ fi
 
 # --------------------------------------------------------------------------- groups
 
-RESULTS="$(mktemp)"
-trap 'rm -f "$RESULTS"' EXIT
 any_failed=0
 summary=()
 
@@ -122,7 +121,6 @@ while IFS='|' read -r group repos required optional; do
 
     result=ok
     if [ "${#failed[@]}" -gt 0 ]; then result=failed; any_failed=1; fi
-    printf '%s\t%s\t%s\t%s\n' "$group" "$result" "${failed[*]:-}" "${opt_failed[*]:-}" >> "$RESULTS"
     summary+=("$(printf '  %-8s %-7s failed: %s   optional failed: %s' "$group" "$result" \
         "${failed[*]:--}" "${opt_failed[*]:--}")")
 done <<< "$PLAN"
@@ -130,13 +128,4 @@ done <<< "$PLAN"
 echo "=== result$([ "$CHECK" -eq 1 ] && echo ' (check only: nothing was installed)')"
 printf '%s\n' "${summary[@]}"
 
-if [ "$CHECK" -eq 0 ] && [ -n "$PRODUCTS" ]; then
-    record="$PRODUCTS/.prod/state/packages.yml"
-    if py record "$PKG_DIR" "$record" "$TOOL" "$RESULTS"; then
-        chown --reference="$PRODUCTS" "$record" 2>/dev/null || true
-        echo "applied record: $record"
-    else
-        echo "warning: could not write the applied record $record"
-    fi
-fi
 exit "$any_failed"

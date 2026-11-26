@@ -10,12 +10,11 @@ as **cupsoft** unless a step says root. For nodes, see the [client manual](manua
 3. [Install, upgrade and roll back the tool](#3-install-upgrade-and-roll-back-the-tool)
 4. [System packages](#4-system-packages)
 5. [Release a new vlist](#5-release-a-new-vlist)
-6. [Register an old vlist (once)](#6-register-an-old-vlist-once)
-7. [Fix a released modulefile (revision)](#7-fix-a-released-modulefile-revision)
-8. [Withdraw or remove a bad release](#8-withdraw-or-remove-a-bad-release)
-9. [Checks](#9-checks)
-10. [Don'ts](#10-donts)
-11. [Troubleshooting](#11-troubleshooting)
+6. [Fix a released modulefile (revision)](#6-fix-a-released-modulefile-revision)
+7. [Withdraw or remove a bad release](#7-withdraw-or-remove-a-bad-release)
+8. [Checks](#8-checks)
+9. [Don'ts](#9-donts)
+10. [Troubleshooting](#10-troubleshooting)
 
 ---
 
@@ -42,13 +41,12 @@ Terms:
 /home/cupsoft/Products/
 ├── .prod/
 │   ├── current -> versions/vX.Y        the tool in use
-│   ├── versions/vX.Y/                  installed tool versions (read-only; the newest 3 are kept)
+│   ├── versions/vX.Y/                  the installed tool version (read-only)
 │   ├── etc/prod.conf                   settings (role: server)
 │   └── state/                          history.jsonl, packages.yml, lock
 ├── vlist/
 │   ├── drafts/4.1.yml                  a draft before release (you write it)
 │   ├── 4.0.yml                         a released vlist (locked)
-│   ├── 3.1.vlist                       old format; kept for nodes on the old system
 │   └── 3.0.withdrawn                   withdrawal record (only if withdrawn)
 ├── modulefiles/
 │   ├── ROOT/V6.40.04_3.14.9            fixed modulefile (locked)
@@ -56,9 +54,7 @@ Terms:
 └── ROOT/
     ├── V6.40.04_3.14.9/                binaries (locked after release)
     ├── V6.40.04_3.14.9.manifest
-    ├── V6.40.04_3.14.9.buildinfo       build record, for people to read
-    ├── V6.40.04_3.14.9.recipe.yml      the recipe it was built with (saved by build.sh)
-    └── setup_ROOT.sh                   old system; kept for now
+    └── V6.40.04_3.14.9.recipe.yml      the recipe it was built with, and its buildinfo (saved by build.sh)
 ```
 
 Files that `prod` does not manage (`CERNLIB.tgz`, unreleased versions, ...) are listed by `prod list` under "not
@@ -81,9 +77,8 @@ git checkout main                                  # back to main, for building 
 
 - copies the tool to `/home/cupsoft/Products/.prod/versions/vX.Y/` and points `current` to it;
 - creates `.prod/etc/prod.conf` only if it does not exist (`role: server`);
-- links `~/.local/bin/prod`;
-- on the server, **leaves the old `~/setup_prod.sh` alone and creates no `~/setup_prod.csh`** (see
-  [3.4](#34-living-with-the-old-system));
+- links `~/setup_prod.sh`, `~/setup_prod.csh` and `~/.local/bin/prod` to it (a real file in their place is moved to
+  `<name>.bak` first);
 - ends with `prod doctor --quick`. Problems there do not fail the install.
 
 Keep the clone: the later steps (upgrades, builds, releases) run in it.
@@ -103,7 +98,7 @@ prod --version
 sudo /home/cupsoft/Products/.prod/current/share/postinstall.sh --check   # as root; see section 4
 ```
 
-- `prod.conf` and `state/` stay. The newest 3 tool versions are kept (`--keep N`).
+- `prod.conf` and `state/` stay. Only the installed tool version is kept; the others are removed.
 - **If the new tag changed `packages/`, run `postinstall.sh` (section 4).** `--check` shows whether anything is
   missing.
 - New modulefile templates are used from the next release on. Released vlists do not change.
@@ -111,43 +106,19 @@ sudo /home/cupsoft/Products/.prod/current/share/postinstall.sh --check   # as ro
 
 ### 3.3 Roll back
 
+Check out the older tag and install it:
+
 ```bash
-ls /home/cupsoft/Products/.prod/versions/          # kept versions (newest 3)
-ln -sfn versions/vX.Y /home/cupsoft/Products/.prod/current.tmp   # vX.Y: the version to go back to
-mv -T /home/cupsoft/Products/.prod/current.tmp /home/cupsoft/Products/.prod/current
+git checkout vX.Y && ./install.sh
+git checkout main
 prod --version
 ```
 
-Or check out the older tag and run `./install.sh --force`.
+### 3.4 Released versions are read-only
 
-### 3.4 Living with the old system
-
-Some nodes still use the old system: `install_products.sh` to install, and the server's `~/setup_prod.sh <vlist>`,
-which it copies. Until all nodes are moved, the server serves both. `prod` never deletes or changes old files:
-
-| Old file | What `prod` does |
-|---|---|
-| Server's `~/setup_prod.sh` | Leaves it alone (install.sh creates no `setup_prod*` files on the server) |
-| `vlist/<name>.vlist` | Leaves it alone; writes `<name>.yml` next to it |
-| `<NAME>/setup_<NAME>.sh` | Leaves it alone |
-| `<NAME>/<VERSION>/` | Same content, but **locked** once released. Old tar copies still work |
-
-To use the new setup on the server meanwhile:
-
-```bash
-. /home/cupsoft/Products/.prod/current/share/setup_prod.sh 4.0
-```
-
-Released versions are read-only. For example, **nobody can `pip install` into a released PYTHON**. Users install
-into their home or a venv ([client manual 3.1](manual-client.md#31-adding-python-packages-pip)). A package everyone
-needs goes into a new PYTHON version and a new vlist.
-
-When no node uses the old system any more, replace the server's old `~/setup_prod.sh` (it is kept as
-`~/setup_prod.sh.pre-prod`):
-
-```bash
-./install.sh --replace-legacy-setup              # in your clone of the repository
-```
+For example, **nobody can `pip install` into a released PYTHON**. Users install into their home or a venv
+([client manual 3.1](manual-client.md#31-adding-python-packages-pip)). A package everyone needs goes into a new
+PYTHON version and a new vlist.
 
 ## 4. System packages
 
@@ -186,83 +157,86 @@ prod release daq_3.1
 
 ### 5.1 Write the recipe
 
-Every version needs a **recipe**, `recipes/<NAME>/V<version>.yml`, in the repository:
+Every version needs a **recipe**, `recipes/<NAME>/<VERSION>.yml`:
 
 ```yaml
 # recipes/ROOT/V6.40.04_3.14.9.yml
-format: "1"
 product: "ROOT"
 version: "V6.40.04_3.14.9"
 depends:
-  - {name: "PYTHON", version: "V3.14.9"}      # must be loaded with this version
-source: {url: "https://root.cern/download/root_v6.40.04.source.tar.gz"}
-build: |
-  recipes/ROOT/build.sh 6.40.04 3.14.9
-notes: "free text"
+  - {name: "PYTHON", version: "V3.14.9"}      # loaded with exactly this version
+source:
+  url: "https://root.cern/download/root_v6.40.04.source.tar.gz"
+options:                                       # the cmake options of build.sh
+  - "-DCMAKE_BUILD_TYPE=Release"
+  - "-Dpyroot=ON"
 ```
 
-- The tool checks only `format`, `product`, `version`, `depends` and `ldd_ignore`. `source`, `build` and `notes`
-  are a record. (`built` is added by `build.sh`; don't write it yourself.)
-- Products that we build also need their options: `V<version>.options` (cmake), or for PYTHON
-  `V<version>.requirements.txt` (pip packages).
-- **Our own packages from GitHub** (CUPDATAMODEL, CUPDAQ): `source` names the repository and the exact commit:
+| Field | Used by |
+|---|---|
+| `product`, `version` | must match the file location |
+| `depends` | `build.sh` loads them; `prod release` checks that they are earlier in the vlist |
+| `source` | `build.sh` gets the source: `{url}` downloads an archive, `{url, tag}` checks out that git tag |
+| `options` | `build.sh`: the cmake options (`./configure` options for PYTHON) |
+
+- `#` comments are free. Nothing else is allowed in a recipe. (`built` and `buildinfo` are added by `build.sh` to the
+  saved copy; don't write them yourself.)
+- PYTHON also needs `<VERSION>.requirements.txt` (pip packages) next to its recipe.
+- **Our own packages from GitHub** (CUPDATAMODEL, CUPDAQ) name a git tag:
 
   ```yaml
   depends:
-    - {name: "ROOT", version: "V6.40.04_3.14.9"}
-    - {name: "HDF5", version: "V2.2.0"}
+    - {name: "ROOT", version: "V6.32.20_3.11.14"}
+    - {name: "HDF5", version: "V1.14.2"}
   source:
     url: "https://github.com/cup-software2018/CUPDataModel.git"
-    branch: "v1.3"                                         # for people; branches move
-    commit: "93fcf9c8493843af3f1b5572bc3151b16a7f33cb"   # build.sh checks out exactly this
+    tag: "v1.4"
+  options:
+    - "-DCMAKE_BUILD_TYPE=Release"
+    - "-DCUPDM_AUTO_INSTALL_DEPENDENCIES=OFF"
+    - "-DCUPDM_ENABLE_HDF5=ON"
   ```
 
-- `ldd_ignore` lists optional files (globs in the version directory) that `prod doctor` should not count when they
-  miss a shared library, with the reason:
-
-  ```yaml
-  ldd_ignore:
-    - path: "lib/python3.14/site-packages/numba/np/ufunc/tbbpool.*.so"
-      reason: "numba's optional TBB threading layer; EL9 has no libtbb.so.12"
-  ```
-
-  You don't need to list libraries that a pip wheel ships in the same directory, or Qt plugins and QML modules
-  (except platform plugins). They are not counted anyway.
+- **The same source with other dependencies** (v1.4 with ROOT 6.32 and with ROOT 6.40): give each build its own
+  version, `V1.4.1.yml` and `V1.4.2.yml`, both with `tag: "v1.4"`. Drafts still say `V1.4` (5.3).
 - A **new product** (a name that does not exist yet) also needs a modulefile template
-  ([5.6](#56-modulefile-template-for-a-new-product)), and optionally `recipes/<NAME>/buildinfo.sh`. These are part of
-  the tool: tag and upgrade the tool ([3.2](#32-upgrade)) before you release the product.
-- Write the recipe where you like: in the server's clone, or elsewhere and then `git pull` on the server. Commit and
-  push it in the end, because the git history is the record. The saved copy names the commit it came from, and says
-  "with uncommitted changes" if `recipes/<NAME>/` was not committed when you built.
+  ([5.6](#56-modulefile-template-for-a-new-product)). The template is part of the tool: tag and upgrade the tool
+  ([3.2](#32-upgrade)) before you release the product. `recipes/<NAME>/build.sh` and the optional
+  `recipes/<NAME>/buildinfo.sh` are run from where you build.
+- The recipes only have to be on the products server where you build (for example a copy of `recipes/`). They don't
+  have to be committed: the copy saved next to the version is the record.
 
 ### 5.2 Build (staging)
 
 Products are not relocatable, so **build at the final path**. Until the release you may change, delete or rebuild
 the directory; clients do not see it.
 
-For these products the repository has a build script. It gets the source and builds, tests, installs and checks
-the product:
+For these products the repository has a build script. It gets the recipe's source and builds, tests, installs and
+checks the product. The argument is the version **without the V**: `build.sh 1.4.1` builds the recipe `V1.4.1.yml`
+into `<Products>/<NAME>/V1.4.1`.
 
 | Product | Command |
 |---|---|
-| PYTHON | `recipes/PYTHON/build.sh <version>` |
-| ROOT | `recipes/ROOT/build.sh <ROOT version> <Python version>` |
-| GEANT4 | `recipes/GEANT4/build.sh <version>` |
-| HDF5 | `recipes/HDF5/build.sh <version>` |
-| CUPDATAMODEL | `recipes/CUPDATAMODEL/build.sh <version>` |
-| CUPDAQ | `recipes/CUPDAQ/build.sh <version>` |
+| PYTHON | `recipes/PYTHON/build.sh 3.14.9` |
+| ROOT | `recipes/ROOT/build.sh 6.40.04_3.14.9` (the PYTHON comes from the recipe's `depends`) |
+| GEANT4 | `recipes/GEANT4/build.sh 11.4.3` |
+| HDF5 | `recipes/HDF5/build.sh 2.2.0` |
+| CUPDATAMODEL | `recipes/CUPDATAMODEL/build.sh 1.4.1` |
+| CUPDAQ | `recipes/CUPDAQ/build.sh 4.4` |
 
 - The script runs in a clean environment, so a loaded vlist does not leak in.
-- Build output goes to log files in `--workdir` (default `/tmp/prod-build-<name>-<version>`). The screen shows one
+- Build output goes to log files in `--workdir` (default `/tmp/prod-build-<name>-V<version>`). The screen shows one
   progress line a minute, for example `build.sh: compiling 45% at 12:31 (23 min)`.
 - At the end it checks the result. Some products also use files from `recipes/<NAME>/check/`: HDF5 and
   CUPDATAMODEL build a small program against the new installation the way the DAQ uses them; CUPDAQ starts every
   program and reads a sample configuration (no hardware needed).
-- When the checks pass, it saves the recipe next to the version:
+- When the checks pass, it saves the recipe next to the version, with `built` (which file, where, when) and
+  `buildinfo` (what `recipes/<NAME>/buildinfo.sh` prints for the new version: features, versions, RPATHs; a record
+  for people, not used for checks):
 
   ```
   build.sh: /home/cupsoft/Products/CUPDAQ/V4.3.2.recipe.yml
-  build.sh:   built: recipes/CUPDAQ/V4.3.2.yml at commit 4b615872706f on cupdev0 at 2026-11-23T10:12:00+0900
+  build.sh:   built: /home/cupsoft/build-recipes/CUPDAQ/V4.3.2.yml (not in a git checkout) on cupdev0 at 2026-11-23T10:12:00+0900
   build.sh: CUPDAQ V4.3.2 is ready (3.3M).
   ```
 
@@ -291,7 +265,6 @@ rsync -a /home/cupsoft/Products/ROOT/V6.40.04_3.14.9 /home/cupsoft/Products/ROOT
 - Use the server's **real path**. On cupdev0, `/home/cupsoft/Products` is a symlink to `/scratch/cupsoft/Products`,
   and the AlmaLinux 9 rsync (3.2.7-1.el9_8) refuses a destination that goes through a symlink ("Too many levels of
   symbolic links"). Find the real path with `ssh cupsoft@192.168.0.150 readlink -f /home/cupsoft/Products`.
-- Write the build node into the recipe's `notes`.
 
 ### 5.3 Write a draft
 
@@ -301,7 +274,6 @@ mkdir -p /home/cupsoft/Products/vlist/drafts      # once
 
 ```yaml
 # /home/cupsoft/Products/vlist/drafts/4.1.yml
-format: "1"
 description: "PYTHON 3.14 + ROOT 6.40.06 + HDF5 2.2 + Geant4 11.4"
 products:                          # list order = load order: dependencies first
   - {name: "PYTHON", version: "V3.14.9"}
@@ -310,8 +282,11 @@ products:                          # list order = load order: dependencies first
   - {name: "GEANT4", version: "V11.4.3"}
 ```
 
+- A version in a draft may stand for several builds: `V1.4` means `V1.4` or any `V1.4.<x>`. `prod release` takes the
+  one whose recipe's `depends` are all earlier in the draft (with ROOT V6.32.20 in the list, the V1.4.x built with
+  ROOT V6.32.20), and the released vlist names it (`V1.4.1`). If none or more than one fits, it stops and lists them.
 - The file name is the vlist name. Use only `[A-Za-z0-9._-]`. **A name is never used twice**, including withdrawn
-  names and old `.vlist` names. (Only a removed release that no node had synced frees its name, 8.2.)
+  names. (Only a removed release that no node had synced frees its name, 7.2.)
 - Convention: `[<purpose>_]<major>.<minor>` (`4.1`, `daq_3.0`). Bump the major when the Python or ROOT generation
   changes.
 
@@ -336,6 +311,7 @@ vlist hash sha256:…
 
 What `prod release` does:
 
+0. Draft versions such as `V1.4` become the build that fits (5.3); it prints `CUPDATAMODEL V1.4 -> V1.4.1`.
 1. Frozen versions: checks that they still match their manifest.
 2. Staging versions: checks them (absolute or broken symlinks, special files, ...) and computes the manifest.
 3. Makes the fixed modulefiles (keeps existing ones) and checks the dependencies within the vlist. The recipe is
@@ -388,28 +364,10 @@ once. `generate` gets the version directory and prints Tcl lines; it runs once, 
 product's own setup script (like `thisroot.sh`) does to the environment, use `modulefiles/_common/sh2mod.py` (see
 ROOT's and GEANT4's `generate`). The result is fixed as plain lines, so the script never runs at load time.
 
-`recipes/<NAME>/buildinfo.sh` gets the version directory and prints `key<TAB>value` lines. They are saved in
-`<VERSION>.buildinfo` as a record (not used for checks).
+`recipes/<NAME>/buildinfo.sh` gets the version directory and prints `key<TAB>value` lines. `build.sh` saves them in
+`<VERSION>.recipe.yml` as `buildinfo`, a record (not used for checks). If it fails, the recipe is saved without it.
 
-## 6. Register an old vlist (once)
-
-This registers an old `vlist/<name>.vlist` under **the same name**, without rebuilding anything.
-
-- **Done:** `daq_2.1` and `mon_1.0`.
-- **Still to do:** `3.0`, `3.1`, `daq_1.0`, `daq_2.0`.
-- **Not registered:** `1.0` and `2.0` (they contain ANACONDA), and `0.1`, `0.9`, `1.1`, `2.1` (no versions).
-
-```bash
-prod release --migrate 3.1 --check      # check first
-prod release --migrate 3.1
-```
-
-- The `NAME VERSION` lines of the old `.vlist` are copied as they are (comments dropped). You cannot change them.
-- The old `.vlist` and `setup_<NAME>.sh` stay, so nodes on the old system keep working.
-- Old version directories are locked here for the first time. **Read the suspicious file warnings.**
-- A name can be registered only once.
-
-## 7. Fix a released modulefile (revision)
+## 6. Fix a released modulefile (revision)
 
 Released modulefiles never change. Fix the template (`template.tcl` or `generate`) in the repository, upgrade the
 tool, and release **a new vlist** with a revision:
@@ -423,9 +381,9 @@ prod release 4.0.1 --module-rev ROOT/V6.40.04_3.14.9
 - The old vlist (`4.0`) keeps its old modulefile.
 - Without `--module-rev`, a release uses the highest revision of each version.
 
-## 8. Withdraw or remove a bad release
+## 7. Withdraw or remove a bad release
 
-### 8.1 Withdraw
+### 7.1 Withdraw
 
 A release is never edited. Withdraw it and release a fixed one under a new name:
 
@@ -439,7 +397,7 @@ prod withdraw 4.1 --reason "Geant4 data sets incomplete" --replaced-by 4.1.1
 - Where it is already installed, `setup_prod.sh 4.1` and `prod verify` show a warning.
 - The server keeps the withdrawn files (it does not know who still uses them).
 
-### 8.2 Remove (only if no node has synced it)
+### 7.2 Remove (only if no node has synced it)
 
 A release that no node has synced yet (for example one you found wrong while testing it on the server) can be
 removed, and its name used again:
@@ -452,17 +410,16 @@ prod gc --yes                # deletes them
 ```
 
 - `prod remove` deletes only the vlist, never a version. `prod gc` then deletes the released versions (directory,
-  manifest, buildinfo, saved recipe) and fixed modulefiles that no remaining vlist uses. Versions that another
+  manifest, saved recipe) and fixed modulefiles that no remaining vlist uses. Versions that another
   vlist uses, staging versions and files that `prod` does not manage stay.
 - To keep the versions for a later vlist (to skip rebuilding them), don't run `prod gc`. They stay frozen and
   `prod verify` keeps checking them.
-- **If a node has synced it, withdraw it instead (8.1).** A node that synced the old release stops with "the
+- **If a node has synced it, withdraw it instead (7.1).** A node that synced the old release stops with "the
   server's vlist differs" if the name is released again; on that node, run `prod remove 4.1` and `prod gc --yes`.
-- For a migrated vlist, the old `vlist/<name>.vlist` stays, so `prod release --migrate <name>` can register it again.
 - Refused if another vlist was withdrawn in favour of this one (`--replaced-by`): remove both, or keep it.
 - Each removal is recorded in `history.jsonl`.
 
-## 9. Checks
+## 8. Checks
 
 ```bash
 prod verify              # every released vlist, and frozen versions in no vlist, against their manifests
@@ -477,18 +434,18 @@ why. Clients stop with "the server's files differ from the manifest" when they t
 
 History: `Products/.prod/state/history.jsonl` (one line per release, withdraw, verify, doctor, install, ...).
 
-## 10. Don'ts
+## 9. Don'ts
 
 - **Don't change or delete released version directories, manifests, modulefiles or vlists by hand.** The lock
   (`a-w`) only prevents accidents; `chmod` can undo it. If you change them, every client's sync and verify fails.
-  To delete a release, use `prod remove` and `prod gc` (8.2).
+  To delete a release, use `prod remove` and `prod gc` (7.2).
 - **Don't reuse the name of a vlist that a node has synced.** Fix mistakes with a new name and a withdrawal.
-- Don't edit a saved recipe (`<VERSION>.recipe.yml`) by hand. Fix the recipe in the repository and run `build.sh`
+- Don't edit a saved recipe (`<VERSION>.recipe.yml`) by hand. Fix the recipe where you build and run `build.sh`
   (or `save-recipe.py`) again.
 - Don't run `prod sync` on the server (it refuses: role is server).
 - Don't run `prod` or `install.sh` as root (they refuse). Root is only for `postinstall.sh`.
 
-## 11. Troubleshooting
+## 10. Troubleshooting
 
 ### Exit codes
 
@@ -499,15 +456,13 @@ History: `Products/.prod/state/history.jsonl` (one line per release, withdraw, v
 | 2 | Usage error |
 | 3 | Environment error (no configuration, wrong role, cannot reach the server) |
 | 4 | Another `prod` is running |
-| 5 | A file format this tool does not know → upgrade the tool |
 
 ### Common messages
 
 | Message | What to do |
 |---|---|
 | `no draft .../vlist/drafts/4.1.yml; write it first` | Write the draft (5.3) |
-| `vlist '4.1' is already released; names are never reused` | Pick another name. To fix a release: withdraw + new name (or remove it if no node has synced it, 8.2) |
-| `'3.0' is a legacy vlist name; use --migrate to register it` | It is an old `.vlist` name. Register it with `--migrate` |
+| `vlist '4.1' is already released; names are never reused` | Pick another name. To fix a release: withdraw + new name (or remove it if no node has synced it, 7.2) |
 | `ROOT V… needs PYTHON V…, which is not in this vlist` | Add the product from the recipe's `depends` to the vlist |
 | `… which must come before it in the list` | Move the dependency up in the list |
 | `ROOT V… is frozen but differs from its manifest: …` | A released version changed on the server. Find out who and why |
@@ -515,7 +470,6 @@ History: `Products/.prod/state/history.jsonl` (one line per release, withdraw, v
 | `no modulefile template …/template.tcl` | New product: add a template (5.6) |
 | `--module-rev …: there is no fixed modulefile to revise yet` | The version was never released. Release without `--module-rev` |
 | `another prod is running on this node; try again later` | Wait for the other `prod` to finish |
-| `… format 2 is newer than this tool supports (1); update the tool` | Upgrade the tool |
 | `'sync' runs only where role is 'client' (this node: 'server')` | Don't sync on the server |
-| `vlist '4.0' was withdrawn in favour of '4.1'; remove '4.0' too, or keep '4.1'` | `prod remove 4.0 4.1 --yes`, or keep 4.1 (8.2) |
+| `vlist '4.0' was withdrawn in favour of '4.1'; remove '4.0' too, or keep '4.1'` | `prod remove 4.0 4.1 --yes`, or keep 4.1 (7.2) |
 | `…/PRODUCTS is missing (installed by an older install.sh); run install.sh again` | Run `./install.sh --force` from the current tag |

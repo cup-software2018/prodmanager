@@ -1,0 +1,54 @@
+product: "ROOT"
+version: "V6.32.20_3.11.14"
+depends:
+  - {name: "PYTHON", version: "V3.11.14"}
+source:
+  url: "https://root.cern/download/root_v6.32.20.source.tar.gz"
+options:
+  # The features of V6.40.04_3.14.9 without what 6.40 added (mathmore, fftw3, curl) and with what 6.40 removed
+  # (davix with builtin_davix, mysql, builtin_afterimage, rpath). Not in 6.32: thisroot_scripts, asimage_tiff,
+  # builtin_gif. fail-on-missing makes cmake stop instead of silently leaving a feature out.
+  - "-DCMAKE_BUILD_TYPE=Release"
+  - "-DCMAKE_CXX_STANDARD=17"
+  - "-Dfail-on-missing=ON"
+  - "-Dgnuinstall=OFF"
+  - "-Druntime_cxxmodules=ON"
+  - "-Drpath=ON"
+
+  # features
+  - "-Dpyroot=ON"
+  - "-Dtmva=ON"
+  - "-Dtmva-cpu=ON"
+  - "-Dtmva-pymva=ON"
+  - "-Droofit=ON"
+  - "-Ddataframe=ON"
+  - "-Dimt=ON"
+  - "-Dclad=ON"
+  - "-Dhttp=ON"
+  - "-Dwebgui=ON"
+  - "-Droot7=ON"
+  - "-Dspectrum=ON"
+  - "-Dgdml=ON"
+  - "-Dxml=ON"
+  - "-Dssl=ON"
+  - "-Dsqlite=ON"
+  - "-Dfitsio=ON"
+  - "-Dopengl=ON"
+  - "-Dx11=ON"
+  - "-Dasimage=ON"
+  - "-Dvdt=ON"
+  - "-Dxrootd=ON"
+  - "-Ddavix=ON"
+  - "-Dmysql=ON"
+
+  # builtins (not on the system)
+  - "-Dbuiltin_afterimage=ON"
+  - "-Dbuiltin_davix=ON"
+  - "-Dbuiltin_gl2ps=ON"
+  - "-Dbuiltin_lz4=ON"
+  - "-Dbuiltin_xxhash=ON"
+  - "-Dbuiltin_nlohmannjson=ON"
+  - "-Dbuiltin_openui5=ON"
+  - "-Dbuiltin_tbb=ON"
+  - "-Dbuiltin_vdt=ON"
+  - "-Dbuiltin_xrootd=ON"

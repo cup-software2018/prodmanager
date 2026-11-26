@@ -1,0 +1,15 @@
+product: "CUPDATAMODEL"
+version: "V1.4"
+# depends: links ROOT (RawObjs, the dictionaries) and HDF5 (HDF5Utils); its CMake package config finds both
+depends:
+  - {name: "ROOT", version: "V6.32.20_3.11.14"}
+  - {name: "HDF5", version: "V1.14.2"}
+source:
+  url: "https://github.com/cup-software2018/CUPDataModel.git"
+  tag: "v1.4"
+options:
+  - "-DCMAKE_BUILD_TYPE=Release"
+  # never let cmake call dnf or apt
+  - "-DCUPDM_AUTO_INSTALL_DEPENDENCIES=OFF"
+  # HDF5Utils is optional upstream (skipped without a word if HDF5 is not found); build.sh insists on it
+  - "-DCUPDM_ENABLE_HDF5=ON"

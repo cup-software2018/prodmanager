@@ -1,4 +1,4 @@
-"""prod errors and exit codes."""
+"""prodman errors and exit codes."""
 
 
 class ProdError(Exception):
@@ -35,12 +35,6 @@ class LockBusy(ProdError):
     """Another prod is running."""
 
     exit_code = 4
-
-
-class FormatTooNew(ProdError):
-    """The file format version is newer than this tool understands. Update the tool."""
-
-    exit_code = 5
 
 
 class TreeError(ProdError):

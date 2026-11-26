@@ -17,13 +17,12 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Optional
 
-from .errors import FormatError, FormatTooNew, TreeError
+from .errors import FormatError, TreeError
 from .hashing import is_hash, sha256_file
 
-FORMAT = 1
 SUFFIX = ".manifest"
 MAGIC = b"# prodmanager manifest"
-_HEADER_KEYS = ("format", "product", "version", "created", "entries")
+_HEADER_KEYS = ("product", "version", "created", "entries")
 _BAD_PATH_CHARS = ("\t", "\n", "\r")
 
 
@@ -138,7 +137,6 @@ def dumps(entries, *, product, version, created):
     entries = sorted(entries, key=lambda e: _sort_key(e.path))
     out = [
         MAGIC,
-        b"# format: %d" % FORMAT,
         b"# product: " + product.encode(),
         b"# version: " + version.encode(),
         b"# created: " + created.encode(),
@@ -180,11 +178,6 @@ def loads(data):
         header[key] = value.decode("utf-8", "surrogateescape")
         i += 1
 
-    fmt = header.get("format", "")
-    if not fmt.isdigit():
-        raise FormatError(f"invalid manifest format '{fmt}'")
-    if int(fmt) > FORMAT:
-        raise FormatTooNew(f"manifest format {fmt} is newer than this tool supports ({FORMAT}); update the tool")
     missing = [k for k in _HEADER_KEYS if k not in header]
     if missing:
         raise FormatError(f"manifest header is missing: {', '.join(missing)}")

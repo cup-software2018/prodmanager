@@ -3,6 +3,7 @@
 The lock prevents accidents, not attacks: the owner can always chmod it back, and verify reports that.
 """
 
+import contextlib
 import os
 import re
 import shutil
@@ -66,6 +67,19 @@ def remove_tree(root):
     shutil.rmtree(root)
 
 
+@contextlib.contextmanager
+def opened(root):
+    """For writing into a locked tree such as <Products>/modulefiles: its directories get u+w for the duration,
+    and afterwards the whole tree (directories and files) is locked again."""
+    if os.path.isdir(root):
+        unlock_dirs(root)
+    try:
+        yield
+    finally:
+        if os.path.isdir(root):
+            lock_tree(root)
+
+
 def unlock_dirs(root):
     """u+w on the directories of a tree only (see remove_tree for why files are left alone)."""
     for dirpath, _, _ in os.walk(root, topdown=True):
@@ -84,13 +98,20 @@ def is_core_dump(path):
     return int.from_bytes(head[16:18], "little" if head[5] == 1 else "big") == _ELF_CORE
 
 
+# Where Python and pip install files of their own: the standard library (its test data has .tar/.zip files),
+# site-packages and pip's data files (dateutil's zoneinfo .tar.gz, jupyterlab's package.json.orig, ...).
+_PYTHON_FILES_RE = re.compile(r"/(lib/python3\.\d+|site-packages|share/jupyter)/")
+
+
 def suspicious_names(root):
-    """Paths under root that look like leftovers (editor backups, archives, core dumps)."""
+    """Paths under root that look like leftovers (editor backups, archives, core dumps). Where Python and pip
+    install their own files (_PYTHON_FILES_RE) only core dumps count."""
     found = []
     for dirpath, dirnames, filenames in os.walk(root):
+        python_files = bool(_PYTHON_FILES_RE.search(os.path.join(dirpath, "")))
         for name in filenames:
             path = os.path.join(dirpath, name)
-            if name.endswith(SUSPICIOUS_SUFFIXES) or (
+            if (not python_files and name.endswith(SUSPICIOUS_SUFFIXES)) or (
                     _CORE_DUMP_RE.match(name) and not os.path.islink(path) and is_core_dump(path)):
                 found.append(os.path.relpath(path, root))
     return sorted(found)

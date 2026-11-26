@@ -1,5 +1,4 @@
-# NOTICE DAQ ("for notice daq" in the legacy postinstall.sh; yaml-cpp and zeromq were only on the server).
-format: "1"
+# NOTICE DAQ.
 group: "daq"
 description: "CUPDAQ and CUPDATAMODEL dependencies"
 products: ["CUPDAQ", "CUPDATAMODEL"]

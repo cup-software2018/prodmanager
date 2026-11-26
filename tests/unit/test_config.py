@@ -3,9 +3,9 @@ import tempfile
 import unittest
 
 from prod import config
-from prod.errors import EnvError, FormatError, FormatTooNew
+from prod.errors import EnvError, FormatError
 
-CLIENT = b'format: "1"\nrole: "client"\nserver: "cupsoft@192.168.0.150:/home/cupsoft/Products"\n'
+CLIENT = b'role: "client"\nserver: "cupsoft@192.168.0.150:/home/cupsoft/Products"\n'
 
 
 class TestServer(unittest.TestCase):
@@ -40,29 +40,26 @@ class TestConfig(unittest.TestCase):
     def test_env_override(self):
         cfg = config.loads(CLIENT, env={"PROD_SERVER": "newserver:/srv/Products"})
         self.assertEqual(cfg.server.spec, "newserver:/srv/Products")
-        cfg = config.loads(b'format: "1"\nrole: "client"\n', env={"PROD_SERVER": "/tmp/x"})
+        cfg = config.loads(b'role: "client"\n', env={"PROD_SERVER": "/tmp/x"})
         self.assertTrue(cfg.server.is_local)
 
     def test_server_role(self):
-        cfg = config.loads(b'format: "1"\nrole: "server"\n', env={})
+        cfg = config.loads(b'role: "server"\n', env={})
         self.assertIsNone(cfg.server)
         with self.assertRaises(EnvError):
             cfg.require_server()
 
     def test_errors(self):
         cases = {
-            "no format": b'role: "client"\nserver: "/x"\n',
-            "bad role": b'format: "1"\nrole: "master"\n',
+            "bad role": b'role: "master"\n',
             "unknown key": CLIENT + b'colour: "blue"\n',
-            "client without server": b'format: "1"\nrole: "client"\n',
+            "client without server": b'role: "client"\n',
             "ssh_options not a list": CLIENT + b'ssh_options: "-o BatchMode=yes"\n',
         }
         for label, data in cases.items():
             with self.subTest(label):
                 with self.assertRaises(FormatError):
                     config.loads(data, env={})
-        with self.assertRaises(FormatTooNew):
-            config.loads(b'format: "2"\nrole: "client"\n', env={})
 
     def test_dumps_roundtrip(self):
         data = config.dumps("client", "cupdev0:/home/cupsoft/Products", ["-o", "BatchMode=yes", "-i", "/k"])

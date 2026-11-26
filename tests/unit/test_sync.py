@@ -1,4 +1,4 @@
-"""Client commands (sync, verify, list, remove, gc) against a fake server, using real rsync on local paths."""
+"""Client commands (sync, resync, verify, list, remove, gc) against a fake server, using real rsync on local paths."""
 
 import io
 import json
@@ -9,11 +9,11 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
-from prod import cli, config, doctor, fsutil, inventory, state, transfer
+from prod import cli, config, fsutil, inventory, state, transfer
 from prod import progress as progress_mod
 from prod import sync as sync_mod
 from prod import verify as verify_mod
-from prod.errors import CheckFailed, EnvError, LockBusy
+from prod.errors import CheckFailed, EnvError, LockBusy, UsageError
 
 from .test_release import TOOL, FakeServer
 
@@ -52,14 +52,38 @@ class FakeClient(FakeServer):
 
 
 class TestSync(FakeClient):
+    def test_modulefiles_are_read_only(self):
+        def writable_dirs(root):
+            return [d for d, _, _ in os.walk(root) if os.lstat(d).st_mode & 0o222]
+        self.assertEqual(writable_dirs(self.paths.modulefiles), [])  # on the server, after the releases
+        self.sync("3.0", "3.1")
+        self.assertEqual(writable_dirs(self.cpaths.modulefiles), [])  # on a client, after sync
+        inventory.remove(self.cpaths, self.ccfg, ["3.0"], tool=TOOL, yes=True)
+        inventory.gc(self.cpaths, self.ccfg, tool=TOOL, yes=True)
+        self.assertEqual(writable_dirs(self.cpaths.modulefiles), [])  # after remove and gc
+        self.assertFalse(os.path.exists(self.cpaths.bundle_file("3.0")))
+
+    def test_package_lists_follow_the_server(self):
+        self.sync("3.0")
+        lists = os.path.join(self.cpaths.products, "packages")
+        self.assertEqual(sorted(os.listdir(lists)), sorted(os.listdir(self.paths.packages)))
+        self.assertFalse(os.lstat(os.path.join(lists, "root.yml")).st_mode & 0o222)  # a copy: not for editing
+        # the server's lists change (one edited, one removed): the next sync mirrors them
+        with open(os.path.join(self.paths.packages, "root.yml"), "a") as f:
+            f.write("# changed on the server\n")
+        os.unlink(os.path.join(self.paths.packages, "caen.yml"))
+        self.sync("3.0")
+        with open(os.path.join(lists, "root.yml")) as f:
+            self.assertTrue(f.read().endswith("# changed on the server\n"))
+        self.assertFalse(os.path.exists(os.path.join(lists, "caen.yml")))
+        self.assertEqual(inventory.unmanaged(self.cpaths), ([], []))  # managed by prod
+
     def test_first_sync(self):
         [r] = self.sync("3.0")
-        self.assertTrue(r.first_sync)
         self.assertEqual([v.action for v in r.versions], ["transferred", "transferred"])
         p = self.cpaths
-        self.assertEqual(state.get_trusted(p, "3.0"), r.vlist_hash)
         for path in (p.vlist_file("3.0"), p.bundle_file("3.0"), p.module_file("ROOT/V6.32.20_3.11.14"),
-                     p.manifest_file("ROOT", "V6.32.20_3.11.14"), p.buildinfo_file("ROOT", "V6.32.20_3.11.14"),
+                     p.manifest_file("ROOT", "V6.32.20_3.11.14"),
                      self.cfile("ROOT", "V6.32.20_3.11.14", "lib", "libCore.so"),
                      self.cfile("ROOT", "V6.32.20_3.11.14")):
             self.assertFalse(os.lstat(path).st_mode & 0o222, path)
@@ -74,7 +98,6 @@ class TestSync(FakeClient):
         self.assertEqual([v.action for v in r.versions], ["in place", "transferred"])
         [r0, r1] = self.sync("3.0", "3.1")
         self.assertEqual({v.action for v in r0.versions + r1.versions}, {"in place"})
-        self.assertFalse(r0.first_sync)
 
     def test_repair_reuses_unchanged_files(self):
         self.sync("3.0")
@@ -87,7 +110,7 @@ class TestSync(FakeClient):
         self.assertFalse(rep.ok)
         self.assertTrue(any("libCore.so: content differs" in e for e in rep.errors))
         self.assertTrue(any("extra.txt: not in the manifest" in e for e in rep.errors))
-        [r] = self.sync(installed=True)
+        [r] = self.sync(resync=True)
         self.assertEqual([v.action for v in r.versions], ["in place", "transferred"])
         self.assertTrue(self.verify("3.0")[0].ok)
         # the unchanged file was hard-linked from the previous copy, and is still locked
@@ -105,37 +128,24 @@ class TestSync(FakeClient):
         self.assertFalse(all(r.ok for r in sreps))
 
     def test_server_vlist_changed(self):
-        self.sync("3.0")
+        # released files should never change; if they do, verify --remote shows it and resync takes the change
+        self.sync("3.0", "3.1")
         vfile = self.paths.vlist_file("3.0")
         os.chmod(vfile, 0o644)
         with open(vfile, "ab") as f:
             f.write(b"# edited on the server\n")
-        with self.assertRaisesRegex(CheckFailed, "differs from the one first synced"):
-            self.sync("3.0")
         reps = self.verify("3.0", remote=True)
-        self.assertTrue(any("server's vlist differs" in e for e in reps[0].errors))
-        [r] = self.sync("3.0", retrust=True)
-        self.assertTrue(r.retrusted)
-        self.assertIn("retrust", [e["command"] for e in state.read_history(self.cpaths)])
-        self.assertTrue(self.verify("3.0")[0].ok)
-
-    def test_withdrawn(self):
-        from prod import release
-        release.withdraw(self.paths, self.cfg, "3.0", tool=TOOL, reason="bad ROOT", replaced_by="3.1")
-        with self.assertRaisesRegex(CheckFailed, "withdrawn: bad ROOT; use 3.1 instead"):
-            self.sync("3.0")
-        [r] = self.sync("3.0", force=True)
-        self.assertIsNotNone(r.withdrawn)
-        [rep] = self.verify("3.0")
-        self.assertTrue(rep.ok)
-        self.assertTrue(any("withdrawn: bad ROOT (use 3.1 instead)" in w for w in rep.warnings))
+        self.assertTrue(any("server's vlist differs from this node's" in e for e in reps[0].errors))
+        self.assertEqual([r.name for r in self.sync(resync=True)], ["3.0", "3.1"])
+        self.assertTrue(self.verify("3.0", remote=True)[0].ok)
 
     def test_interrupted_transfer_is_resumed(self):
         real = transfer.fetch_tree
 
         def copy_then_fail(cfg, rel, dest, **kw):
             real(cfg, rel, dest, **kw)
-            raise EnvError("connection lost (simulated)")
+            if rel != "packages":  # the connection is lost while a version is transferred
+                raise EnvError("connection lost (simulated)")
 
         with mock.patch.object(transfer, "fetch_tree", side_effect=copy_then_fail):
             with self.assertRaises(EnvError):
@@ -149,7 +159,7 @@ class TestSync(FakeClient):
     def test_dry_run(self):
         [r] = self.sync("3.0", dry_run=True)
         self.assertEqual([v.action for v in r.versions], ["would transfer", "would transfer"])
-        self.assertIsNone(state.get_trusted(self.cpaths, "3.0"))
+        self.assertFalse(os.path.exists(self.cpaths.vlist_file("3.0")))
         self.assertFalse(os.path.exists(self.cfile("PYTHON")))
 
     def test_errors(self):
@@ -160,17 +170,27 @@ class TestSync(FakeClient):
         with state.lock(self.cpaths, exclusive=True):
             with self.assertRaises(LockBusy):
                 self.sync("3.0")
+        with self.assertRaisesRegex(UsageError, "no vlists on this node"):
+            self.sync(resync=True)
 
-    def test_fix_perms(self):
+    def test_writable_files_are_locked_again(self):
         self.sync("3.0")
         f = self.cfile("PYTHON", "V3.11.14", "lib", "libpython.so")
         os.chmod(f, 0o644)
+        os.chmod(self.cpaths.module_file("ROOT/V6.32.20_3.11.14"), 0o644)
         [rep] = self.verify("3.0")
         self.assertTrue(rep.ok)
-        self.assertTrue(any("writable" in w for w in rep.warnings))
-        self.verify("3.0", fix_perms=True)
+        self.assertIn("PYTHON V3.11.14: 1 entries: was writable, locked again", rep.warnings)
+        self.assertIn("modulefile ROOT/V6.32.20_3.11.14: was writable, locked again", rep.warnings)
         self.assertFalse(os.lstat(f).st_mode & 0o222)
+        self.assertFalse(os.lstat(self.cpaths.module_file("ROOT/V6.32.20_3.11.14")).st_mode & 0o222)
         self.assertEqual(self.verify("3.0")[0].warnings, [])
+        # a version that differs from its manifest is not locked
+        self.tamper(f, b"PY")
+        [rep] = self.verify("3.0")
+        self.assertFalse(rep.ok)
+        self.assertTrue(any("not locked" in w for w in rep.warnings))
+        self.assertTrue(os.lstat(f).st_mode & 0o200)
 
 
 class TestSavedRecipe(FakeClient):
@@ -188,38 +208,37 @@ class TestSavedRecipe(FakeClient):
         self.assertFalse(os.lstat(path).st_mode & 0o222)
         self.assertFalse(os.path.exists(self.cpaths.recipe_file("HDF5", "V1.14.2")))  # none on the server: fine
         self.assertEqual(inventory.unmanaged(self.cpaths), ([], []))
-        # doctor reads ldd_ignore from it, even with a tool that has no recipe for the version
-        recs = doctor._recipes_of(self.cpaths, None, [("HDF5", "V2.2.0"), ("HDF5", "V1.14.2")])
-        self.assertEqual(list(recs), [("HDF5", "V2.2.0")])
-        self.assertTrue(recs[("HDF5", "V2.2.0")].saved)
-        inventory.remove(self.cpaths, self.ccfg, ["3.2"], tool=TOOL)
+        inventory.remove(self.cpaths, self.ccfg, ["3.2"], tool=TOOL, yes=True)
         cands = {os.path.relpath(c, self.cpaths.products) for c in inventory.gc_candidates(self.cpaths)}
-        self.assertEqual(cands, {"HDF5/V2.2.0", "HDF5/V2.2.0.manifest", "HDF5/V2.2.0.buildinfo",
-                                 "HDF5/V2.2.0.recipe.yml", "modulefiles/HDF5/V2.2.0"})
+        self.assertEqual(cands, {"HDF5/V2.2.0", "HDF5/V2.2.0.manifest", "HDF5/V2.2.0.recipe.yml",
+                                 "modulefiles/HDF5/V2.2.0"})
 
 
 class TestInventory(FakeClient):
     def test_remove_and_gc(self):
         self.sync("3.0", "3.1")
-        legacy = self.cfile("ROOT", "setup_ROOT.sh")  # a legacy file: never touched by gc
-        with open(legacy, "w") as f:
-            f.write("legacy\n")
-        inventory.remove(self.cpaths, self.ccfg, ["3.0"], tool=TOOL)
+        unmanaged = self.cfile("ROOT", "setup_ROOT.sh")  # a file prod does not manage: never touched by gc
+        with open(unmanaged, "w") as f:
+            f.write("not managed\n")
+        inventory.remove(self.cpaths, self.ccfg, ["3.0"], tool=TOOL)  # without yes: only shows
+        self.assertTrue(os.path.exists(self.cpaths.vlist_file("3.0")))
+        inventory.remove(self.cpaths, self.ccfg, ["3.0"], tool=TOOL, yes=True)
         self.assertFalse(os.path.exists(self.cpaths.vlist_file("3.0")))
-        self.assertIsNotNone(state.get_trusted(self.cpaths, "3.0"))  # trusted record stays
         cands = {os.path.relpath(c, self.cpaths.products) for c in inventory.gc_candidates(self.cpaths)}
         self.assertEqual(cands, {"ROOT/V6.32.20_3.11.14", "ROOT/V6.32.20_3.11.14.manifest",
-                                 "ROOT/V6.32.20_3.11.14.buildinfo", "modulefiles/ROOT/V6.32.20_3.11.14"})
+                                 "ROOT/V6.32.20_3.11.14.recipe.yml", "modulefiles/ROOT/V6.32.20_3.11.14"})
         inventory.gc(self.cpaths, self.ccfg, tool=TOOL)  # without --yes: nothing deleted
         self.assertTrue(os.path.exists(self.cfile("ROOT", "V6.32.20_3.11.14")))
         inventory.gc(self.cpaths, self.ccfg, tool=TOOL, yes=True)
         self.assertFalse(os.path.exists(self.cfile("ROOT", "V6.32.20_3.11.14")))
-        self.assertTrue(os.path.exists(legacy))
+        self.assertTrue(os.path.exists(unmanaged))
         self.assertTrue(os.path.exists(self.cfile("PYTHON", "V3.11.14")))
         self.assertTrue(self.verify()[0].ok)
-        # re-syncing a removed vlist still checks against the old trusted record
+        # a version a vlist uses cannot be removed; one no vlist uses can
+        with self.assertRaisesRegex(CheckFailed, "used by vlist 3.1"):
+            inventory.remove(self.cpaths, self.ccfg, ["PYTHON/V3.11.14"], tool=TOOL, yes=True)
         [r] = self.sync("3.0")
-        self.assertFalse(r.first_sync)
+        self.assertEqual([v.action for v in r.versions], ["in place", "transferred"])
 
     def test_listing(self):
         self.sync("3.0")
@@ -237,11 +256,10 @@ class TestInventory(FakeClient):
         os.makedirs(self.cfile("NEWPROD", ".V1.0.partial"))  # an interrupted first sync: only a leftover
         lst = inventory.listing(self.cpaths, self.ccfg, tool=TOOL, remote=True)
         self.assertEqual([v["name"] for v in lst.vlists], ["3.0"])
-        self.assertTrue(lst.vlists[0]["trusted"])
         self.assertIsNotNone(lst.vlists[0]["first_sync"])
         self.assertEqual({(x["name"], tuple(x["used_by"])) for x in lst.versions},
                          {("PYTHON", ("3.0",)), ("ROOT", ("3.0",))})
-        self.assertEqual(lst.unmanaged, ["CERNLIB.tgz", "GEANT4/V11.1.3", "GEANT4/setup_GEANT4.sh", "PYENV/"])
+        self.assertEqual(lst.not_released, [{"name": "GEANT4", "version": "V11.1.3"}])  # PYENV/, CERNLIB.tgz: not shown
         self.assertEqual(lst.leftovers, ["NEWPROD/.V1.0.partial", "ROOT/.V9.partial"])
         self.assertEqual([v["name"] for v in lst.remote], ["3.0", "3.1"])
 
@@ -268,7 +286,7 @@ class TestClientCli(FakeClient):
     def test_commands(self):
         code, out, err = self.run_cli("sync", "3.0")
         self.assertEqual(code, 0)
-        self.assertIn("first sync", out)
+        self.assertIn("sync 3.0", out)
         # progress lines go to stderr, the summary to stdout
         self.assertIn("3.0: 2 products", err)
         self.assertRegex(err, r"PYTHON +V3.11.14 +transferring \d+ entries")
@@ -295,8 +313,17 @@ class TestClientCli(FakeClient):
         self.assertEqual(code, 1)
         self.assertIn("content differs", out)
         self.assertEqual(self.run_cli("sync")[0], 2)
+        self.assertEqual(self.run_cli("sync", "--installed")[0], 2)  # replaced by resync
+        code, out, _ = self.run_cli("resync")
+        self.assertEqual(code, 0)
+        self.assertIn("sync 3.0", out)
+        self.assertIn("sync 3.1", out)
         self.assertEqual(self.run_cli("gc")[0], 0)
         self.assertEqual(self.run_cli("remove", "9.9")[0], 1)
+        code, out, _ = self.run_cli("remove", "3.1")
+        self.assertEqual(code, 0)
+        self.assertIn("would be deleted; run 'prodman remove 3.1 --yes'", out)
+        self.assertTrue(os.path.exists(self.cpaths.vlist_file("3.1")))
 
 
 

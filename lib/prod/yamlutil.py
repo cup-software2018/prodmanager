@@ -8,7 +8,7 @@ import re
 
 import yaml
 
-from .errors import FormatError, FormatTooNew
+from .errors import FormatError
 
 # Newlines, control characters and Unicode line separators are not allowed in values.
 BAD_CHARS_RE = re.compile("[\x00-\x1f\x7f\x85  ]")
@@ -45,16 +45,6 @@ def load_mapping(data, what):
     if not isinstance(doc, dict):
         raise FormatError(f"{what}: the top level must be a mapping")
     return doc
-
-
-def check_format(value, supported, what):
-    """Check a `format` value. A newer format raises FormatTooNew (exit code 5)."""
-    if not isinstance(value, str) or not value.isdigit():
-        raise FormatError(f"{what}: format '{value}' is not a number")
-    if int(value) > supported:
-        raise FormatTooNew(f"{what}: format {value} is newer than this tool supports ({supported}); update the tool")
-    if int(value) < 1:
-        raise FormatError(f"{what}: invalid format '{value}'")
 
 
 def check_text(key, value):

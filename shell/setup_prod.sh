@@ -2,6 +2,9 @@
 #
 #     . ~/setup_prod.sh <vlist>
 #
+# Without <vlist> it lists the releases on this node; in an interactive shell on a terminal it then asks which one
+# to load (Enter: none).
+#
 # It loads the vlist bundle modulefile `vlist/<vlist>` with environment-modules, which loads every
 # product of the vlist in order. Loading another vlist replaces the previous one (module switch).
 # Safe to source from scripts that use `set -eu`; prints nothing unless the shell is interactive
@@ -12,11 +15,8 @@
 _prod_setup() {
     local products="@PRODUCTS@"
     local name="${1:-}"
-    local restore_u=0 rc=0
+    local restore_u=0 rc=0 skip=0
     case "$-" in *u*) restore_u=1; set +u ;; esac  # the modules init script is not nounset-safe
-
-    # PRODUCTS_DIR was exported by the legacy setup_prod.sh; keep it for scripts that use it.
-    export PRODUCTS_DIR="$products"
 
     if ! type module >/dev/null 2>&1; then
         if [ -r /usr/share/Modules/init/bash ]; then
@@ -34,37 +34,50 @@ _prod_setup() {
         esac
 
         if [ -z "$name" ]; then
-            echo "usage: . ~/setup_prod.sh <vlist>" >&2
-            echo "vlists on this node:" >&2
-            local f found=0
+            local f n desc choice i=0
+            local -a names=()
             for f in "$products"/vlist/*.yml; do
                 [ -e "$f" ] || continue
-                f="${f##*/}"
-                echo "  ${f%.yml}" >&2
-                found=1
+                n="${f##*/}"
+                names+=("${n%.yml}")
             done
-            [ "$found" -eq 1 ] || echo "  (none; install one with 'prod sync <vlist>')" >&2
-            rc=1
-        elif [ ! -f "$products/vlist/$name.yml" ]; then
+            if [ "${#names[@]}" -eq 0 ]; then
+                echo "prod: no releases on this node; install one with 'prodman sync <vlist>'" >&2
+                rc=1
+            else
+                echo "releases on this node:" >&2
+                for n in "${names[@]}"; do
+                    i=$((i + 1))
+                    desc="$(sed -n 's/^description: "\(.*\)"$/\1/p' "$products/vlist/$n.yml")"
+                    printf '  %d) %-12s %s\n' "$i" "$n" "$desc" >&2
+                done
+                case "$-" in *i*) [ -t 0 ] && choice="?" ;; esac
+                if [ "$choice" = "?" ]; then
+                    read -r -p "choose a release (number or name, Enter: none): " choice
+                    if [ -z "$choice" ]; then
+                        skip=1
+                    elif [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#names[@]}" ]; then
+                        name="${names[$((choice - 1))]}"
+                    else
+                        name="$choice"
+                    fi
+                else
+                    echo "usage: . ~/setup_prod.sh <vlist>" >&2
+                    rc=1
+                fi
+            fi
+        fi
+        if [ "$rc" -eq 0 ] && [ "$skip" -eq 0 ] && [ ! -f "$products/vlist/$name.yml" ]; then
             if [ -f "$HOME/.prod-local/vlist/$name.yml" ]; then
                 echo "prod: local vlists (~/.prod-local) are not supported yet" >&2
             else
-                echo "prod: vlist '$name' is not installed on this node; run 'prod sync $name'" >&2
+                echo "prod: vlist '$name' is not installed on this node; run 'prodman sync $name'" >&2
             fi
             rc=1
         fi
     fi
 
-    if [ "$rc" -eq 0 ]; then
-        local withdrawn="$products/vlist/$name.withdrawn" line
-        if [ -f "$withdrawn" ]; then
-            while IFS= read -r line; do
-                case "$line" in
-                    reason:*) echo "prod: warning: vlist $name was withdrawn:${line#reason:}" >&2 ;;
-                    replaced_by:*) echo "prod: warning: use${line#replaced_by:} instead" >&2 ;;
-                esac
-            done < "$withdrawn"
-        fi
+    if [ "$rc" -eq 0 ] && [ "$skip" -eq 0 ]; then
         if [ "${PROD_VLIST:-}" = "$name" ] && module is-loaded "vlist/$name" >/dev/null 2>&1; then
             :  # already loaded
         elif module is-loaded vlist >/dev/null 2>&1; then

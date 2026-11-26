@@ -4,9 +4,7 @@ import unittest
 
 from prod import state
 from prod.config import Paths
-from prod.errors import FormatError, LockBusy
-
-H = "sha256:" + "a" * 64
+from prod.errors import LockBusy
 
 
 class TestState(unittest.TestCase):
@@ -69,17 +67,6 @@ class TestState(unittest.TestCase):
             self.assertFalse(state.record(self.paths, "v0.1", "verify"))
         finally:
             os.chmod(self.paths.state, 0o755)
-
-    def test_trusted(self):
-        self.assertIsNone(state.get_trusted(self.paths, "3.1"))
-        state.set_trusted(self.paths, "3.1", H)
-        self.assertEqual(state.get_trusted(self.paths, "3.1"), H)
-        with open(os.path.join(self.paths.trusted, "3.1.sha256"), "w") as f:
-            f.write("garbage\n")
-        with self.assertRaises(FormatError):
-            state.get_trusted(self.paths, "3.1")
-        with self.assertRaises(ValueError):
-            state.set_trusted(self.paths, "3.1", "garbage")
 
 
 if __name__ == "__main__":

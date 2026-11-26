@@ -1,5 +1,4 @@
 # Packages every node needs: the prod tool itself and the build toolchain.
-format: "1"
 group: "base"
 description: "prod tool requirements and the development toolchain"
 products: []

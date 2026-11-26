@@ -1,4 +1,4 @@
-"""System package lists `packages/<group>.yml` and the applied record.
+"""System package lists `<Products>/packages/<group>.yml`.
 
 postinstall.sh (run as root) uses this module through a small command line:
 
@@ -6,11 +6,8 @@ postinstall.sh (run as root) uses this module through a small command line:
         prints one line per group: <group>|<repos>|<required packages>|<optional packages>
         (lists are space-separated; a space inside a name, as in "@Development Tools", is written %20;
         "|" rather than TAB because the shell's read merges consecutive TABs and loses empty fields)
-    python3 -I -m prod.packages record <packages dir> <record file> <tool version> <results file>
-        writes the applied record from a results file with lines: <group> TAB <ok|failed> TAB <failed> TAB <optional failed>
 """
 
-import hashlib
 import os
 import re
 import subprocess
@@ -19,11 +16,9 @@ from dataclasses import dataclass, field
 from typing import List
 
 from .errors import FormatError
-from .yamlutil import check_format, load_mapping, quote
+from .yamlutil import load_mapping
 
-FORMAT = 1
-RECORD_FORMAT = 1
-_KEYS = ("format", "group", "description", "products", "repos", "packages", "optional")
+_KEYS = ("group", "description", "products", "repos", "packages", "optional")
 _GROUP_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 _PACKAGE_RE = re.compile(r"^(@[A-Za-z0-9 ._+-]+|[A-Za-z0-9][A-Za-z0-9._+-]*)$")
 KNOWN_REPOS = ("crb", "epel")
@@ -52,9 +47,6 @@ def _list(doc, key, what, pattern=None):
 def loads(data, name):
     what = f"package group {name}"
     doc = load_mapping(data, what)
-    if "format" not in doc:
-        raise FormatError(f"{what}: missing field 'format'")
-    check_format(doc["format"], FORMAT, what)
     unknown = [k for k in doc if k not in _KEYS]
     if unknown:
         raise FormatError(f"{what}: unknown fields: {', '.join(map(str, unknown))}")
@@ -88,16 +80,6 @@ def load_all(pkg_dir):
     return groups
 
 
-def lists_hash(pkg_dir):
-    """One hash over all group files (name and bytes), to tell whether a node has applied this version."""
-    h = hashlib.sha256()
-    for f in group_files(pkg_dir):
-        with open(os.path.join(pkg_dir, f), "rb") as fh:
-            data = fh.read()
-        h.update(f.encode() + b"\0" + str(len(data)).encode() + b"\0" + data)
-    return "sha256:" + h.hexdigest()
-
-
 def groups_for_products(groups, products):
     """'base' plus every group serving one of the products."""
     products = set(products)
@@ -115,34 +97,10 @@ def rpm_missing(names, rpm="rpm"):
     return [n for n in plain if n not in installed]
 
 
-# --------------------------------------------------------------------------- applied record
-
-
-def record_dumps(applied, tool, pkg_hash, results):
-    """results: {group: {"result": "ok"|"failed", "failed": [...], "optional_failed": [...]}}"""
-    lines = [f"format: {quote(str(RECORD_FORMAT))}", f"applied: {quote(applied)}", f"tool: {quote(tool)}",
-             f"packages_hash: {quote(pkg_hash)}", "groups:"]
-    for name in sorted(results):
-        r = results[name]
-        failed = ", ".join(quote(x) for x in r["failed"])
-        opt = ", ".join(quote(x) for x in r["optional_failed"])
-        lines.append(f"  {quote(name)}: {{result: {quote(r['result'])}, failed: [{failed}], "
-                     f"optional_failed: [{opt}]}}")
-    return ("\n".join(lines) + "\n").encode("utf-8")
-
-
-def record_loads(data):
-    doc = load_mapping(data, "packages record")
-    check_format(doc.get("format", ""), RECORD_FORMAT, "packages record")
-    return doc
-
-
 # --------------------------------------------------------------------------- command line for postinstall.sh
 
 
 def _main(argv):
-    from . import state  # only needed for the record command
-
     if len(argv) >= 2 and argv[0] == "plan":
         groups = load_all(argv[1])
         wanted = argv[2:]
@@ -153,16 +111,6 @@ def _main(argv):
             if not wanted or g.name in wanted or g.name == "base":
                 print("|".join([g.name, " ".join(g.repos), " ".join(p.replace(" ", "%20") for p in g.packages),
                                 " ".join(g.optional)]))
-        return 0
-    if len(argv) == 5 and argv[0] == "record":
-        pkg_dir, record_file, tool, results_file = argv[1:]
-        results = {}
-        with open(results_file, encoding="utf-8") as f:
-            for line in f:
-                name, result, failed, opt = (line.rstrip("\n").split("\t") + ["", "", ""])[:4]
-                results[name] = {"result": result, "failed": failed.split(), "optional_failed": opt.split()}
-        data = record_dumps(state.now_iso(), tool, lists_hash(pkg_dir), results)
-        state.atomic_write(record_file, data)
         return 0
     print(__doc__, file=sys.stderr)
     return 2

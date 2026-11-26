@@ -5,7 +5,7 @@ import tempfile
 import unittest
 
 from prod import manifest
-from prod.errors import FormatError, FormatTooNew, TreeError
+from prod.errors import FormatError, TreeError
 from prod.hashing import sha256_bytes
 
 CREATED = "2026-12-01T10:00:00+09:00 by prod test on testhost"
@@ -190,7 +190,7 @@ class TestVerify(Tree):
 
 
 class TestLoadsErrors(unittest.TestCase):
-    GOOD = (b"# prodmanager manifest\n# format: 1\n# product: T\n# version: V1\n"
+    GOOD = (b"# prodmanager manifest\n# product: T\n# version: V1\n"
             b"# created: x\n# entries: 2\n"
             b"d\t-\t-\t-\t.\n"
             b"f\t-\t1\t" + ("sha256:" + "a" * 64).encode() + b"\ta\n")
@@ -217,10 +217,6 @@ class TestLoadsErrors(unittest.TestCase):
             with self.subTest(label):
                 with self.assertRaises(FormatError):
                     manifest.loads(data)
-
-    def test_too_new(self):
-        with self.assertRaises(FormatTooNew):
-            manifest.loads(self.GOOD.replace(b"# format: 1", b"# format: 2"))
 
 
 if __name__ == "__main__":

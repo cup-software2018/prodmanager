@@ -1,22 +1,18 @@
 #!/bin/bash
 # Install the prod tool from this checkout into <Products>/.prod.
 #
-#   ./install.sh [--products DIR] [--role client|server] [--server SPEC] [--force] [--keep N]
-#                [--keep-legacy-setup | --replace-legacy-setup] [--link-home | --no-link-home]
+#   ./install.sh [--products_dir DIR] [--role client|server] [--server SPEC] [--force]
 #
-# - Copies the tool to <Products>/.prod/versions/<version>/ and switches the 'current' symlink atomically.
+# - Copies the tool to <Products>/.prod/versions/<version>/, switches the 'current' symlink atomically and
+#   removes every other tool version.
 # - Creates <Products>/.prod/etc/prod.conf only if it does not exist yet.
-# - Links ~/setup_prod.sh, ~/setup_prod.csh and ~/.local/bin/prod to the current tool. A real
-#   ~/setup_prod.sh (the legacy one) is moved to ~/setup_prod.sh.pre-prod first.
-# - Keeps the newest N tool versions (default 3).
-# - --keep-legacy-setup leaves ~/setup_prod.sh alone and creates no ~/setup_prod.csh; only ~/.local/bin/prod
-#   is linked. This is the DEFAULT where role is 'server': nodes that still use the legacy
-#   install_products.sh copy the server's ~/setup_prod* (scp follows symlinks), so those files must stay
-#   legacy until no node uses install_products.sh any more. Then run install.sh --replace-legacy-setup once.
-#   Meanwhile the new setup script is <Products>/.prod/current/share/setup_prod.sh.
-# - Files in $HOME are touched only when the Products directory is ~/Products (a real node). A test install
-#   elsewhere (--products /some/test/Products) leaves $HOME alone unless --link-home is given; run its
-#   tool as <Products>/.prod/current/bin/prod.
+# - On a server, puts the build scripts and the example recipes into <Products>/build-recipes, where versions are
+#   built. prod does not manage that directory: the scripts are replaced by this version's, recipes (V*.yml,
+#   *.requirements.txt) are only added when missing, and nothing is removed.
+# - On a server, puts the system package lists into <Products>/packages, only those that are missing: they are
+#   edited there (clients get them with prodman sync). Also creates <Products>/vlist/drafts for the drafts.
+# - Links ~/setup_prod.sh, ~/setup_prod.csh and ~/.local/bin/prodman to the current tool. A real file in their
+#   place is moved to <name>.bak first.
 set -euo pipefail
 
 REPO="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -24,47 +20,30 @@ PRODUCTS="${HOME}/Products"
 ROLE=""
 SERVER=""
 FORCE=0
-KEEP=3
 VERSION_NAME=""
-KEEP_LEGACY_SETUP=""
-LINK_HOME=""
 REQUIRED_PACKAGES=(environment-modules rsync openssh-clients python3 python3-pyyaml git)
 
 die() { echo "install.sh: $*" >&2; exit 1; }
 
 usage() {
-    sed -n '2,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '2,/^[^#]/p' "${BASH_SOURCE[0]}" | grep '^#' | sed 's/^# \{0,1\}//'
     cat <<'EOF'
 Options:
-  --products DIR    Products directory (default: $HOME/Products). It must exist and belong to you.
-  --role ROLE       client or server; needed only when prod.conf does not exist yet
-  --server SPEC     products server for a client: [user@]host:/path or /path
-  --force           reinstall a version that is already installed
-  --keep N          number of tool versions to keep (default 3)
-  --version-name V  install under this name instead of 'git describe' (development and tests only)
-  --keep-legacy-setup
-                    do not touch ~/setup_prod.sh and do not create ~/setup_prod.csh
-                    (default where role is 'server'; see above)
-  --replace-legacy-setup
-                    link ~/setup_prod.sh to the new one even where role is 'server' (end of the transition)
-  --link-home       link ~/setup_prod.sh, ~/setup_prod.csh and ~/.local/bin/prod even though --products
-                    is not ~/Products
-  --no-link-home    touch nothing in $HOME even though --products is ~/Products
+  --products_dir DIR  Products directory (default: $HOME/Products). It must exist and belong to you.
+  --role ROLE         client or server; needed only when prod.conf does not exist yet
+  --server SPEC       products server for a client: [user@]host:/path or /path
+  --force             reinstall a version that is already installed
+  --version-name V    install under this name instead of 'git describe' (development and tests only)
 EOF
 }
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --products) PRODUCTS="${2:?}"; shift 2 ;;
+        --products_dir) PRODUCTS="${2:?}"; shift 2 ;;
         --role) ROLE="${2:?}"; shift 2 ;;
         --server) SERVER="${2:?}"; shift 2 ;;
         --force) FORCE=1; shift ;;
-        --keep) KEEP="${2:?}"; shift 2 ;;
         --version-name) VERSION_NAME="${2:?}"; shift 2 ;;
-        --keep-legacy-setup) KEEP_LEGACY_SETUP=1; shift ;;
-        --replace-legacy-setup) KEEP_LEGACY_SETUP=0; shift ;;
-        --link-home) LINK_HOME=1; shift ;;
-        --no-link-home) LINK_HOME=0; shift ;;
         -h|--help) usage; exit 0 ;;
         *) usage >&2; die "unknown option: $1" ;;
     esac
@@ -75,14 +54,13 @@ done
 [ "$(id -u)" -ne 0 ] || die "do not run as root; run as the owner of the Products directory (cupsoft)"
 case "$PRODUCTS" in
     /*) ;;
-    *) die "--products must be an absolute path" ;;
+    *) die "--products_dir must be an absolute path" ;;
 esac
 [[ "$PRODUCTS" =~ ^/[A-Za-z0-9._/-]+$ ]] || die "Products path may use only [A-Za-z0-9._/-]: $PRODUCTS"
 PRODUCTS="${PRODUCTS%/}"
 [ -d "$PRODUCTS" ] || die "$PRODUCTS does not exist; create it first (it may be a symlink to a local disk)"
 owner="$(stat -L -c %U -- "$PRODUCTS")"
 [ "$owner" = "$(id -un)" ] || die "$PRODUCTS belongs to $owner, not to $(id -un)"
-[[ "$KEEP" =~ ^[1-9][0-9]*$ ]] || die "--keep must be a positive number"
 
 if command -v rpm >/dev/null 2>&1; then
     missing=()
@@ -140,7 +118,7 @@ TMP="$VERSIONS/.$VERSION_NAME.tmp.$$"
 trap 'unlock_and_remove "$TMP"' EXIT
 mkdir "$TMP" "$TMP/share"
 cp -r "$REPO/bin" "$REPO/lib" "$TMP/"
-for d in modulefiles recipes packages; do
+for d in modulefiles; do
     mkdir "$TMP/share/$d"
     cp -r "$REPO/$d/." "$TMP/share/$d/"
     rm -f "$TMP/share/$d/.gitkeep"
@@ -179,12 +157,35 @@ sys.stdout.buffer.write(config.dumps(sys.argv[2], sys.argv[3] or None))
     echo "install.sh: created $PROD/etc/prod.conf"
 fi
 
+# --------------------------------------------------------------------------- build recipes (server only)
+
+node_role="$("${PY[@]}" '
+import sys
+sys.path.insert(0, sys.argv[1])
+from prod import config
+print(config.load(config.Paths(sys.argv[2]), env={}).role)
+' "$TARGET/lib" "$PRODUCTS")" || die "cannot read $PROD/etc/prod.conf"
+if [ "$node_role" = "server" ]; then
+    mkdir -p "$PRODUCTS/build-recipes"
+    # the real path: rsync 3.2.7 (EL9) refuses a destination that goes through a symlink, as ~/Products often is
+    dest="$(cd -P -- "$PRODUCTS/build-recipes" && pwd)"
+    rsync -a --exclude='V*.yml' --exclude='*.requirements.txt' --exclude=__pycache__ --exclude=.gitkeep \
+        "$REPO/build-recipes/" "$dest/"
+    rsync -a --ignore-existing --include='*/' --include='V*.yml' --include='*.requirements.txt' --exclude='*' \
+        "$REPO/build-recipes/" "$dest/"
+    echo "install.sh: build scripts updated in $PRODUCTS/build-recipes (the recipes there are kept)"
+    mkdir -p "$PRODUCTS/packages"
+    rsync -a --ignore-existing --include='*.yml' --exclude='*' "$REPO/packages/" "$(cd -P -- "$PRODUCTS/packages" && pwd)/"
+    echo "install.sh: system package lists in $PRODUCTS/packages (existing ones are kept)"
+    mkdir -p "$PRODUCTS/vlist/drafts"
+fi
+
 # --------------------------------------------------------------------------- links in $HOME
 
-link() {  # link TARGET NAME: make NAME a symlink to TARGET; keep a real file as NAME.pre-prod
+link() {  # link TARGET NAME: make NAME a symlink to TARGET; keep a real file as NAME.bak
     local target="$1" name="$2" backup
     if [ -e "$name" ] && [ ! -L "$name" ]; then
-        backup="$name.pre-prod"
+        backup="$name.bak"
         [ ! -e "$backup" ] || backup="$backup.$(date +%Y%m%d%H%M%S)"
         mv -- "$name" "$backup"
         echo "install.sh: moved the existing $name to $backup"
@@ -192,41 +193,21 @@ link() {  # link TARGET NAME: make NAME a symlink to TARGET; keep a real file as
     ln -s -- "$target" "$name.tmp.$$"
     mv -T -f -- "$name.tmp.$$" "$name"
 }
-if [ -z "$LINK_HOME" ]; then
-    # default: only a real node (Products is ~/Products) gets links in $HOME, never a test install
-    [ "$PRODUCTS" = "${HOME%/}/Products" ] && LINK_HOME=1 || LINK_HOME=0
-fi
-if [ "$LINK_HOME" -eq 0 ]; then
-    echo "install.sh: $PRODUCTS is not ~/Products: nothing in $HOME was linked or changed" \
-         "(test install; --link-home links anyway). Run this tool as $PROD/current/bin/prod"
-elif [ -z "$KEEP_LEGACY_SETUP" ]; then
-    # default: keep the legacy setup script where this node is the products server
-    node_role="$("${PY[@]}" '
-import sys
-sys.path.insert(0, sys.argv[1])
-from prod import config
-print(config.load(config.Paths(sys.argv[2]), env={}).role)
-' "$TARGET/lib" "$PRODUCTS")" || die "cannot read $PROD/etc/prod.conf"
-    [ "$node_role" = "server" ] && KEEP_LEGACY_SETUP=1 || KEEP_LEGACY_SETUP=0
-fi
-if [ "$LINK_HOME" -eq 1 ]; then
-    mkdir -p "$HOME/.local/bin"
-    if [ "$KEEP_LEGACY_SETUP" -eq 1 ]; then
-        echo "install.sh: --keep-legacy-setup: ~/setup_prod.sh is left as it is; the new one is" \
-             "$PROD/current/share/setup_prod.sh"
-    else
-        link "$PROD/current/share/setup_prod.sh" "$HOME/setup_prod.sh"
-        link "$PROD/current/share/setup_prod.csh" "$HOME/setup_prod.csh"
-    fi
-    link "$PROD/current/bin/prod" "$HOME/.local/bin/prod"
+mkdir -p "$HOME/.local/bin"
+link "$PROD/current/share/setup_prod.sh" "$HOME/setup_prod.sh"
+link "$PROD/current/share/setup_prod.csh" "$HOME/setup_prod.csh"
+link "$PROD/current/bin/prodman" "$HOME/.local/bin/prodman"
+# the tool was called prod before: drop that link if it points into this Products directory
+if [ -L "$HOME/.local/bin/prod" ] && [[ "$(readlink "$HOME/.local/bin/prod")" == "$PROD/"* ]]; then
+    rm -f -- "$HOME/.local/bin/prod"
 fi
 
-# --------------------------------------------------------------------------- old versions
+# --------------------------------------------------------------------------- other versions
 
-mapfile -t old < <(cd "$VERSIONS" && ls -1t | grep -v '^\.' | grep -vxF "$VERSION_NAME" | tail -n +"$KEEP")
+mapfile -t old < <(cd "$VERSIONS" && ls -1 | grep -v '^\.' | grep -vxF "$VERSION_NAME")
 for v in "${old[@]}"; do
     unlock_and_remove "$VERSIONS/$v"
-    echo "install.sh: removed old tool version $v"
+    echo "install.sh: removed tool version $v"
 done
 
 "${PY[@]}" '
@@ -236,6 +217,4 @@ from prod import config, state
 state.record(config.Paths(sys.argv[2]), sys.argv[3], "install", result="ok")
 ' "$TARGET/lib" "$PRODUCTS" "$VERSION_NAME"
 
-echo "install.sh: installed $("$PROD/current/bin/prod" --version) in $PROD"
-echo "install.sh: running prod doctor --quick"
-"$PROD/current/bin/prod" doctor --quick || echo "install.sh: prod doctor reported problems (see above); the tool is installed"
+echo "install.sh: installed $("$PROD/current/bin/prodman" --version) in $PROD"

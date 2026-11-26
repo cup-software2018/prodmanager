@@ -11,23 +11,10 @@ from prod import modulefile, packages, recipe
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SRC = os.path.join(REPO, "modulefiles")
-RECIPES = os.path.join(REPO, "recipes")
+RECIPES = os.path.join(REPO, "build-recipes")
 sys.path.insert(0, os.path.join(SRC, "_common"))
 import sh2mod  # noqa: E402
 
-# The legacy vlists to migrate, in their order.
-# 1.0 and 2.0 are not migrated: they use Anaconda, which is no longer used.
-LEGACY = {
-    "3.0": [("PYTHON", "V3.11.14"), ("ROOT", "V6.32.20_3.11.14"), ("HDF5", "V1.14.2")],
-    "3.1": [("PYTHON", "V3.11.14"), ("ROOT", "V6.32.20_3.11.14"), ("HDF5", "V1.14.2"), ("GEANT4", "V11.1.3"),
-            ("CAENHVWRAPPER", "V6.6")],
-    "daq_1.0": [("PYTHON", "V3.11.14"), ("ROOT", "V6.32.20_3.11.14"), ("HDF5", "V1.14.2"), ("CAENHVWRAPPER", "V6.6")],
-    "daq_2.0": [("PYTHON", "V3.11.14"), ("ROOT", "V6.32.20_3.11.14"), ("HDF5", "V1.14.2"), ("CAENHVWRAPPER", "V6.6"),
-                ("CUPDATAMODEL", "V1.1"), ("CUPDAQ", "V4.2")],
-    "daq_2.1": [("PYTHON", "V3.11.14"), ("ROOT", "V6.32.20_3.11.14"), ("HDF5", "V1.14.2"), ("CAENHVWRAPPER", "V6.6"),
-                ("CUPDATAMODEL", "V1.1"), ("CUPDAQ", "V4.3")],
-    "mon_1.0": [("PYTHON", "V3.11.14"), ("ROOT", "V6.32.20_3.11.14"), ("CAENHVWRAPPER", "V6.6")],
-}
 MODULECMD = shutil.which("modulecmd.tcl") or "/usr/share/Modules/libexec/modulecmd.tcl"
 
 
@@ -51,14 +38,7 @@ class TestRealSources(unittest.TestCase):
                     for d, _ in r.depends:
                         modulefile.load_source(SRC, d)
                     count += 1
-        self.assertEqual(count, 14)
-
-    def test_legacy_vlists_satisfy_dependency_order(self):
-        """What prod release --migrate will check, before touching the server."""
-        for name, products in LEGACY.items():
-            for i, (p, v) in enumerate(products):
-                for d, dv in recipe.load(RECIPES, p, v).depends:
-                    self.assertIn((d, dv), products[:i], f"{name}: {p} {v} needs {d} {dv} earlier in the list")
+        self.assertEqual(count, 7)
 
     def test_package_lists(self):
         groups = packages.load_all(os.path.join(REPO, "packages"))

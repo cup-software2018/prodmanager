@@ -1,30 +1,27 @@
-"""`prod sync` on a client.
+"""`prodman sync` and `prodman resync` on a client.
+
+sync installs the vlists named; resync syncs every vlist already on this node again.
 
 Per vlist:
-  1. fetch the vlist (and .withdrawn) into a temporary directory
-  2. check the format and compare the vlist hash with the trusted record (first sync: record it)
-  3. stop if withdrawn (unless --force)
-  4. fetch manifests, buildinfo, saved recipes (if any), fixed modulefiles and the bundle; check them against the
-     vlist hashes (buildinfo and recipes are records: not hashed)
-  5. per version: keep it if it already matches its manifest; otherwise mirror it into
+  1. fetch the vlist into a temporary directory and parse it
+  2. fetch manifests, saved recipes (if any), modulefiles and the bundle
+  3. per version: keep it if it already matches its manifest; otherwise mirror it into
      `<NAME>/.<VER>.partial` (reusing unchanged files with --link-dest), verify it completely, lock it,
      and swap it in with renames (running processes keep the old inodes)
-  6. put the metadata in place, the vlist file last: once the vlist is visible, everything it needs is there
-  7. record history
+  4. put the metadata in place, the vlist file last: once the vlist is visible, everything it needs is there
+  5. record history
 """
 
 import os
 import tempfile
 import time
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List
 
-from . import fsutil, manifest, state, transfer
+from . import envcheck, fsutil, manifest, state, transfer
 from . import progress as progress_mod
 from . import vlist as vlist_mod
 from .errors import CheckFailed, UsageError
-from .hashing import sha256_file
-from .release import withdrawn_loads
 from .verify import installed_vlists
 
 
@@ -39,11 +36,7 @@ class VersionResult:
 @dataclass
 class SyncResult:
     name: str
-    vlist_hash: str
     versions: List[VersionResult] = field(default_factory=list)
-    first_sync: bool = False
-    retrusted: bool = False
-    withdrawn: Optional[dict] = None
     warnings: List[str] = field(default_factory=list)
     dry_run: bool = False
     seconds: float = 0.0
@@ -61,7 +54,7 @@ def _first(findings, n=3):
 
 
 def _transfer(paths, cfg, name, version, entries, progress):
-    """Mirror one version from the server and swap it in (step 5)."""
+    """Mirror one version from the server and swap it in (step 3)."""
     timer = progress_mod.Timer()
     nbytes = progress_mod.size(progress_mod.total_size(entries))
     vdir = paths.version_dir(name, version)
@@ -96,64 +89,35 @@ def _transfer(paths, cfg, name, version, entries, progress):
     progress.item(name, version, f"transferred and verified ({nbytes}, {timer})")
 
 
-def _sync_one(paths, cfg, name, *, tool, dry_run, force, retrust, done, progress):
+def _sync_one(paths, cfg, name, *, tool, dry_run, done, progress):
     vlist_mod.check_name(name)
     started = time.monotonic()
     os.makedirs(paths.tmp, exist_ok=True)
     tmp = tempfile.mkdtemp(dir=paths.tmp, prefix=f"sync-{name}-")
     try:
-        # 1-3: vlist, trust, withdrawal
-        vrel, wrel = f"vlist/{name}{vlist_mod.SUFFIX}", f"vlist/{name}.withdrawn"
+        # 1: vlist
+        vrel = f"vlist/{name}{vlist_mod.SUFFIX}"
         progress.line(f"{name}: reading the vlist from {cfg.server.spec} ...")
-        got = transfer.fetch_files(cfg, [vrel, wrel], tmp)
+        got = transfer.fetch_files(cfg, [vrel], tmp)
         if vrel not in got:
             raise CheckFailed(f"vlist '{name}' is not on the products server")
         data = _read(os.path.join(tmp, vrel))
         v = vlist_mod.loads(data, name=name)
-        res = SyncResult(name=name, vlist_hash=vlist_mod.vlist_hash(data), dry_run=dry_run)
-        trusted = state.get_trusted(paths, name)
-        res.first_sync = trusted is None
-        if trusted is not None and trusted != res.vlist_hash:
-            if not retrust:
-                raise CheckFailed(
-                    f"the server's vlist '{name}' differs from the one first synced on this node\n"
-                    f"  first synced: {trusted}\n  server now:   {res.vlist_hash}\n"
-                    f"released vlists must never change; ask the products server admin. If the change is "
-                    f"legitimate, run 'prod sync --retrust {name}'")
-            res.retrusted = True
-        if wrel in got:
-            res.withdrawn = withdrawn_loads(_read(os.path.join(tmp, wrel)))
-            if not force:
-                hint = f"; use {res.withdrawn['replaced_by']} instead" if res.withdrawn.get("replaced_by") else ""
-                raise CheckFailed(f"vlist '{name}' was withdrawn: {res.withdrawn['reason']}{hint} "
-                                  f"(--force installs it anyway)")
+        res = SyncResult(name=name, dry_run=dry_run)
 
-        # 4: metadata
-        meta = {f"modulefiles/vlist/{name}": v.bundle}
-        buildinfos, recipes = [], []
+        # 2: metadata
+        meta = [f"modulefiles/vlist/{name}"]
+        recipes = []
         for p in v.products:
-            meta[f"{p.name}/{p.version}.manifest"] = p.manifest
-            meta[f"modulefiles/{p.module}"] = p.modulefile
-            buildinfos.append(f"{p.name}/{p.version}.buildinfo")
+            meta += [f"{p.name}/{p.version}.manifest", f"modulefiles/{p.module}"]
             recipes.append(f"{p.name}/{p.version}.recipe.yml")  # only versions built with save-recipe.py have one
-        got = transfer.fetch_files(cfg, list(meta) + buildinfos + recipes, tmp)
-        bad = []
-        for rel, expected in meta.items():
-            if rel not in got:
-                bad.append(f"{rel} is missing")
-            elif sha256_file(os.path.join(tmp, rel)) != expected:
-                bad.append(f"{rel} does not match the vlist")
-        if bad:
-            raise CheckFailed(f"the products server is inconsistent for vlist '{name}':\n"
-                              + "\n".join(f"  - {b}" for b in bad))
-        res.warnings += [f"{b} is missing on the server" for b in buildinfos if b not in got]
+        got = transfer.fetch_files(cfg, meta + recipes, tmp)
+        missing = [rel for rel in meta if rel not in got]
+        if missing:
+            raise CheckFailed(f"the products server is missing files of vlist '{name}':\n"
+                              + "\n".join(f"  - {rel}" for rel in missing))
 
-        if not dry_run and (res.first_sync or res.retrusted):
-            state.set_trusted(paths, name, res.vlist_hash)
-            if res.retrusted:
-                state.record(paths, tool, "retrust", vlist=name, old_hash=trusted, new_hash=res.vlist_hash)
-
-        # 5: binaries
+        # 3: binaries
         progress.line(f"{name}: {len(v.products)} products")
         for p in v.products:
             key = (p.name, p.version)
@@ -184,47 +148,78 @@ def _sync_one(paths, cfg, name, *, tool, dry_run, force, retrust, done, progress
             vr.action = "transferred"
             done.add(key)
 
-        # 6: metadata in place, vlist last
+        # 4: metadata in place, vlist last (<Products>/modulefiles is read-only again afterwards)
         if not dry_run:
-            for rel in list(meta) + [b for b in buildinfos + recipes if b in got]:
-                if rel == f"modulefiles/vlist/{name}":
-                    continue
-                state.atomic_write(os.path.join(paths.products, rel), _read(os.path.join(tmp, rel)), mode=0o444)
-            state.atomic_write(paths.bundle_file(name), _read(os.path.join(tmp, f"modulefiles/vlist/{name}")),
-                               mode=0o444)
-            if res.withdrawn is not None:
-                state.atomic_write(paths.withdrawn_file(name), _read(os.path.join(tmp, wrel)), mode=0o444)
+            with fsutil.opened(paths.modulefiles):
+                for rel in meta + [r for r in recipes if r in got]:
+                    if rel == f"modulefiles/vlist/{name}":
+                        continue
+                    state.atomic_write(os.path.join(paths.products, rel), _read(os.path.join(tmp, rel)),
+                                       mode=0o444)
+                state.atomic_write(paths.bundle_file(name), _read(os.path.join(tmp, f"modulefiles/vlist/{name}")),
+                                   mode=0o444)
             state.atomic_write(paths.vlist_file(name), data, mode=0o444)
 
         res.seconds = time.monotonic() - started
         if not dry_run:
             moved = [f"{x.name} {x.version}" for x in res.versions if x.action == "transferred"]
-            state.record(paths, tool, "sync", vlist=name, vlist_hash=res.vlist_hash, result="ok",
+            state.record(paths, tool, "sync", vlist=name, result="ok",
                          transferred=moved, seconds=round(res.seconds, 1))
         return res
     finally:
         fsutil.remove_tree(tmp)
 
 
-def sync(paths, cfg, names, *, tool, dry_run=False, force=False, retrust=False, installed=False,
+def _sync_packages(paths, cfg, progress):
+    """Mirror the server's <Products>/packages (the system package lists) into this node's, read-only."""
+    if not transfer.list_dir(cfg, "packages"):
+        progress.line("packages: the server has no package lists")
+        return
+    os.makedirs(paths.tmp, exist_ok=True)
+    tmp = tempfile.mkdtemp(dir=paths.tmp, prefix="sync-packages-")
+    try:
+        transfer.fetch_tree(cfg, "packages", tmp)
+        old = os.path.join(paths.products, ".packages.old")
+        fsutil.remove_tree(old)
+        if os.path.lexists(paths.packages):
+            os.rename(paths.packages, old)
+        os.rename(tmp, paths.packages)  # before locking: a read-only directory cannot move to another parent
+        fsutil.lock_tree(paths.packages)
+        fsutil.remove_tree(old)
+    finally:
+        if os.path.lexists(tmp):
+            fsutil.remove_tree(tmp)
+    progress.line("packages: the server's package lists are in place")
+
+
+def sync(paths, cfg, names, *, tool, dry_run=False, resync=False, check_environment=False,
          progress=progress_mod.SILENT):
-    cfg.require_role("client", "sync")
+    """resync: sync every vlist already on this node (names must be empty).
+    check_environment: after each vlist, load it with setup_prod.sh and check the system packages and shared
+    libraries (warnings in the result)."""
+    cfg.require_role("client", "resync" if resync else "sync")
     cfg.require_server()
     with state.lock(paths, exclusive=True):
-        if installed:
-            if names:
-                raise UsageError("give vlist names or --installed, not both")
+        if resync:
             names = installed_vlists(paths)
             if not names:
-                raise UsageError("no vlists are installed on this node")
+                raise UsageError("no vlists on this node; install one with 'prodman sync <vlist>'")
         if not names:
-            raise UsageError("which vlist? (prod sync <vlist>... or prod sync --installed)")
+            raise UsageError("which vlist? (prodman sync <vlist>...)")
+        if not dry_run:
+            _sync_packages(paths, cfg, progress)
         done = set()
         results = []
         for name in names:
             try:
-                results.append(_sync_one(paths, cfg, name, tool=tool, dry_run=dry_run, force=force,
-                                         retrust=retrust, done=done, progress=progress))
+                res = _sync_one(paths, cfg, name, tool=tool, dry_run=dry_run, done=done, progress=progress)
+                if check_environment and not dry_run:
+                    progress.line(f"{name}: checking that it loads on this node ...")
+                    errors, warnings = envcheck.environment_check(
+                        paths, name, [(v.name, v.version) for v in res.versions], home=os.environ.get("HOME", ""),
+                        run_ldd=True, progress=progress)
+                    res.warnings += errors + warnings
+                results.append(res)
             except CheckFailed as e:
                 if not dry_run:
                     state.record(paths, tool, "sync", vlist=name, result="error", detail=str(e))

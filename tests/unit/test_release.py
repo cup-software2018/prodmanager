@@ -8,8 +8,10 @@ from contextlib import redirect_stderr, redirect_stdout
 
 from prod import cli, config, fsutil, inventory, manifest, release, state
 from prod import vlist as vlist_mod
-from prod.errors import CheckFailed, EnvError, FormatError, UsageError
+from prod.errors import CheckFailed, EnvError, FormatError
 from prod.hashing import sha256_file
+
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 TOOL = "v0.1-test"
 
@@ -35,13 +37,11 @@ class FakeServer(unittest.TestCase):
         self.recipe("PYTHON", "V3.11.14")
         self.recipe("ROOT", "V6.32.20_3.11.14", deps=[("PYTHON", "V3.11.14")])
         self.recipe("HDF5", "V1.14.2")
-        script = self.w(self.tool_root, "recipes", "ROOT", "buildinfo.sh")
-        with open(script, "w") as f:
-            f.write('#!/bin/sh\nprintf "root-config --version\\t6.32.20\\nprefix\\t%s\\n" "$1"\n')
-        os.chmod(script, 0o755)
 
         with open(self.w(self.products, ".prod", "etc", "prod.conf"), "wb") as f:
             f.write(config.dumps("server"))
+        shutil.copytree(os.path.join(REPO, "packages"), self.paths.packages,  # what install.sh puts on a server
+                        ignore=shutil.ignore_patterns(".gitkeep"))
         self.version("PYTHON", "V3.11.14", {"bin/python3": b"#!/bin/sh\n", "lib/libpython.so": b"py"})
         self.version("ROOT", "V6.32.20_3.11.14", {"bin/root": b"#!/bin/sh\n", "lib/libCore.so": b"core"})
         self.version("HDF5", "V1.14.2", {"bin/h5dump": b"#!/bin/sh\n", "lib/libhdf5.so": b"h5"})
@@ -59,20 +59,21 @@ class FakeServer(unittest.TestCase):
         return path
 
     def recipe(self, name, version, deps=()):
-        lines = ['format: "1"', f'product: "{name}"', f'version: "{version}"']
+        """The recipe saved next to the version, as build.sh (save-recipe.py) leaves it; the only one release uses."""
+        lines = [f'product: "{name}"', f'version: "{version}"']
         if deps:
             lines.append("depends:")
             lines += [f'  - {{name: "{d}", version: "{v}"}}' for d, v in deps]
-        with open(self.w(self.tool_root, "recipes", name, version + ".yml"), "w") as f:
+        with open(self.w(self.paths.recipe_file(name, version)), "w") as f:
             f.write("\n".join(lines) + "\n")
 
     def saved_recipe(self, name, version, deps=()):
         """A recipe saved next to the version by build.sh (save-recipe.py), not in the tool."""
-        lines = ['format: "1"', f'product: "{name}"', f'version: "{version}"']
+        lines = [f'product: "{name}"', f'version: "{version}"']
         if deps:
             lines.append("depends:")
             lines += [f'  - {{name: "{d}", version: "{v}"}}' for d, v in deps]
-        lines.append(f'built: "recipes/{name}/{version}.yml at commit 0123456789ab on cupdev0 at T"')
+        lines.append(f'built: "build-recipes/{name}/{version}.yml at commit 0123456789ab on cupdev0 at T"')
         with open(self.w(self.paths.recipe_file(name, version)), "w") as f:
             f.write("\n".join(lines) + "\n")
 
@@ -85,7 +86,7 @@ class FakeServer(unittest.TestCase):
                 os.chmod(path, 0o755)
 
     def draft(self, name, products, description="test vlist"):
-        lines = ['format: "1"', f'description: "{description}"', "products:"]
+        lines = [f'description: "{description}"', "products:"]
         lines += [f'  - {{name: "{n}", version: "{v}"}}' for n, v in products]
         with open(os.path.join(self.paths.drafts, name + ".yml"), "w") as f:
             f.write("\n".join(lines) + "\n")
@@ -106,21 +107,17 @@ class TestRelease(FakeServer):
         self.assertEqual([(x.name, x.version, x.module) for x in v.products],
                          [("PYTHON", "V3.11.14", "PYTHON/V3.11.14"), ("ROOT", "V6.32.20_3.11.14", "ROOT/V6.32.20_3.11.14")])
         for x in v.products:
-            self.assertEqual(x.manifest, sha256_file(p.manifest_file(x.name, x.version)))
-            self.assertEqual(x.modulefile, sha256_file(p.module_file(x.module)))
             self.assertFalse(manifest.has_errors(manifest.verify(manifest.load(p.manifest_file(x.name, x.version))[1],
                                                                   p.version_dir(x.name, x.version))))
-        self.assertEqual(v.bundle, sha256_file(p.bundle_file("3.0")))
-        self.assertEqual(rp.vlist_hash, sha256_file(p.vlist_file("3.0")))
-        # everything released is locked, the draft is gone, history has the event
+        self.assertEqual(len(rp.products), 2)
+        # everything released is locked, the draft stays, history has the event
         for path in (p.vlist_file("3.0"), p.bundle_file("3.0"), p.module_file("ROOT/V6.32.20_3.11.14"),
-                     p.manifest_file("ROOT", "V6.32.20_3.11.14"), p.buildinfo_file("ROOT", "V6.32.20_3.11.14"),
-                     p.version_dir("ROOT", "V6.32.20_3.11.14"),
+                     p.manifest_file("ROOT", "V6.32.20_3.11.14"), p.version_dir("ROOT", "V6.32.20_3.11.14"),
                      os.path.join(p.version_dir("ROOT", "V6.32.20_3.11.14"), "lib", "libCore.so")):
             self.assertFalse(self.writable(path), path)
         exe = os.lstat(os.path.join(p.version_dir("ROOT", "V6.32.20_3.11.14"), "bin", "root")).st_mode
         self.assertEqual(stat.S_IMODE(exe), 0o555)
-        self.assertFalse(os.path.exists(os.path.join(p.drafts, "3.0.yml")))
+        self.assertTrue(os.path.exists(os.path.join(p.drafts, "3.0.yml")))  # kept for the next release
         self.assertEqual(state.read_history(p)[-1]["command"], "release")
         # bundle loads in vlist order; ROOT's modulefile checks PYTHON by path
         with open(p.bundle_file("3.0")) as f:
@@ -128,10 +125,7 @@ class TestRelease(FakeServer):
         self.assertLess(bundle.index("module load PYTHON/V3.11.14"), bundle.index("module load ROOT/V6.32.20_3.11.14"))
         with open(p.module_file("ROOT/V6.32.20_3.11.14")) as f:
             self.assertIn(f'$::env(PYTHON_HOME) ne "{self.products}/PYTHON/V3.11.14"', f.read())
-        with open(p.buildinfo_file("ROOT", "V6.32.20_3.11.14")) as f:
-            info = f.read()
-        self.assertIn('"root-config --version": "6.32.20"', info)
-        self.assertIn('source: "extracted"', info)
+        self.assertFalse(os.path.exists(os.path.join(p.products, "ROOT", "V6.32.20_3.11.14.buildinfo")))
 
     def test_saved_recipe(self):
         # a new version whose recipe is only next to it (built on the server), not in the tool
@@ -144,17 +138,44 @@ class TestRelease(FakeServer):
             self.release("daq_3.0", check=True)  # the saved recipe's depends are checked
         self.draft("daq_3.0", [("HDF5", "V1.14.2"), ("CUPDAQ", "V4.3.2")])
         rp = self.release("daq_3.0")
-        built = "recipes/CUPDAQ/V4.3.2.yml at commit 0123456789ab on cupdev0 at T"
+        built = "build-recipes/CUPDAQ/V4.3.2.yml at commit 0123456789ab on cupdev0 at T"
         self.assertEqual(rp.products[1].notes, [f"recipe CUPDAQ/V4.3.2.recipe.yml ({built})"])
-        self.assertEqual(rp.products[0].notes, [f"recipe recipes/HDF5/V1.14.2.yml @ {TOOL}"])
+        self.assertEqual(rp.products[0].notes, ["recipe HDF5/V1.14.2.recipe.yml"])
         p = self.paths
         with open(p.module_file("CUPDAQ/V4.3.2")) as f:
             text = f.read()
         self.assertIn(f"# recipe: CUPDAQ/V4.3.2.recipe.yml ({built})\n", text)
         self.assertIn("module load HDF5/V1.14.2", text)
-        with open(p.buildinfo_file("CUPDAQ", "V4.3.2")) as f:
-            self.assertIn(f'recipe: "CUPDAQ/V4.3.2.recipe.yml ({built})"', f.read())
         self.assertFalse(self.writable(p.recipe_file("CUPDAQ", "V4.3.2")))
+
+    def test_draft_version_picks_the_build_that_fits(self):
+        # V1.4 in a draft means V1.4 or V1.4.<x>: the one whose depends are earlier in the vlist
+        with open(self.w(self.tool_root, "modulefiles", "CUPDATAMODEL", "template.tcl"), "w") as f:
+            f.write(template("CUPDATAMODEL", "CUPDM_DIR"))
+        self.version("HDF5", "V2.2.0", {"lib/libhdf5.so": b"h5 2"})
+        self.recipe("HDF5", "V2.2.0")
+        for v, h in (("V1.4.1", "V1.14.2"), ("V1.4.2", "V2.2.0"), ("V1.40", "V1.14.2")):
+            self.version("CUPDATAMODEL", v, {"lib/libRawObjs.so": v.encode()})
+            self.saved_recipe("CUPDATAMODEL", v, deps=[("HDF5", h)])
+        self.draft("dm_a", [("HDF5", "V1.14.2"), ("CUPDATAMODEL", "V1.4")])
+        rp = self.release("dm_a")
+        self.assertEqual([(x.name, x.version) for x in rp.vlist.products],
+                         [("HDF5", "V1.14.2"), ("CUPDATAMODEL", "V1.4.1")])  # never V1.40
+        self.draft("dm_b", [("HDF5", "V2.2.0"), ("CUPDATAMODEL", "V1.4")])
+        rp = self.release("dm_b", check=True)
+        self.assertEqual(rp.vlist.products[1].version, "V1.4.2")
+        # none fits, more than one fits
+        self.draft("dm_c", [("CUPDATAMODEL", "V1.4")])
+        with self.assertRaisesRegex(CheckFailed, "none of the built versions V1.4.1, V1.4.2 has all its depends"):
+            self.release("dm_c", check=True)
+        self.version("CUPDATAMODEL", "V1.4.3", {"lib/libRawObjs.so": b"3"})
+        self.saved_recipe("CUPDATAMODEL", "V1.4.3", deps=[("HDF5", "V1.14.2")])
+        self.draft("dm_d", [("HDF5", "V1.14.2"), ("CUPDATAMODEL", "V1.4")])
+        with self.assertRaisesRegex(CheckFailed, "more than one built version fits this vlist: V1.4.1, V1.4.3"):
+            self.release("dm_d", check=True)
+        # an exact name still works as before
+        self.draft("dm_e", [("HDF5", "V1.14.2"), ("CUPDATAMODEL", "V1.4.3")])
+        self.assertEqual(self.release("dm_e", check=True).vlist.products[1].version, "V1.4.3")
 
     def test_saved_recipe_locked_for_frozen(self):
         # a frozen version's saved recipe that became writable is locked again by the next release
@@ -169,7 +190,7 @@ class TestRelease(FakeServer):
     def test_bad_saved_recipe(self):
         self.version("CUPDAQ", "V4.3.2", {"bin/daq": b"#!/bin/sh\n"})
         with open(self.w(self.paths.recipe_file("CUPDAQ", "V4.3.2")), "w") as f:
-            f.write('format: "1"\nproduct: "CUPDAQ"\nversion: "V4.3.1"\n')
+            f.write('product: "CUPDAQ"\nversion: "V4.3.1"\n')
         self.draft("daq_3.0", [("CUPDAQ", "V4.3.2")])
         with self.assertRaisesRegex(CheckFailed, "V4.3.2.recipe.yml: .*do not match the file location"):
             self.release("daq_3.0", check=True)
@@ -184,17 +205,12 @@ class TestRelease(FakeServer):
         self.assertEqual([pp.module_text is None for pp in rp.products], [True, True, False])
         self.assertEqual(before, sha256_file(self.paths.manifest_file("ROOT", "V6.32.20_3.11.14")))
 
-    def test_names_are_never_reused(self):
+    def test_name_in_use(self):
         self.draft("3.0", [("PYTHON", "V3.11.14")])
         self.release("3.0")
         self.draft("3.0", [("PYTHON", "V3.11.14")])
         with self.assertRaisesRegex(CheckFailed, "already released"):
             self.release("3.0")
-        with open(self.paths.legacy_vlist_file("2.0"), "w") as f:
-            f.write("PYTHON V3.11.14\n")
-        self.draft("2.0", [("PYTHON", "V3.11.14")])
-        with self.assertRaisesRegex(CheckFailed, "legacy"):
-            self.release("2.0")
 
     def test_frozen_version_changed_on_server(self):
         self.draft("3.0", [("PYTHON", "V3.11.14")])
@@ -252,7 +268,13 @@ class TestRelease(FakeServer):
         elf_core = b"\x7fELF\x02\x01\x01" + bytes(9) + (4).to_bytes(2, "little")  # 64-bit LE, e_type ET_CORE
         elf_exec = b"\x7fELF\x02\x01\x01" + bytes(9) + (2).to_bytes(2, "little")  # e_type ET_EXEC
         os.makedirs(os.path.join(d, "schemas"))
+        for sub in ("lib/python3.11/site-packages/pkg", "lib/python3.11/test", "share/jupyter/lab/schemas"):
+            os.makedirs(os.path.join(d, sub))
         files = {"lib/old.tgz": b"x", "core.4711": elf_core, "lib/a~": b"x", "lib/b.orig": b"x",
+                 # shipped by pip packages: not counted
+                 "lib/python3.11/site-packages/pkg/data.tar.gz": b"x",
+                 "lib/python3.11/site-packages/pkg/package.json.orig": b"x",
+                 "lib/python3.11/test/testtar.tar": b"x", "share/jupyter/lab/schemas/x.json.orig": b"x",
                  "lib/core.mjs": b"x", "lib/core.py": b"x",
                  "schemas/core": b'{"$schema": "core vocabulary"}\n',  # named core, but not a core dump
                  "lib/core": elf_exec}
@@ -265,89 +287,26 @@ class TestRelease(FakeServer):
         self.assertIn("HDF5 V1.14.2: 4 suspicious file(s)", w)
         self.assertIn("(4 in all)", w)
         self.assertIn("core.4711", w)
-        for name in ("core.mjs", "core.py", "schemas/core", "lib/core,"):
+        for name in ("core.mjs", "core.py", "schemas/core", "lib/core,", "site-packages", "python3.11/test",
+                     "share/jupyter"):
             self.assertNotIn(name, w)
 
-    def test_migrate(self):
-        with open(self.paths.legacy_vlist_file("3.0"), "w") as f:
-            f.write("#\n# Products \n#\nPYTHON\t\tV3.11.14\nROOT\t\tV6.32.20_3.11.14\n#HDF5          V1.14.2\n")
-        legacy = sha256_file(self.paths.legacy_vlist_file("3.0"))
-        self.release("3.0", migrate=True)
-        v = vlist_mod.load(self.paths.vlist_file("3.0"))
-        self.assertEqual(v.migrated_from, "3.0.vlist")
-        self.assertEqual(v.description, "migrated from 3.0.vlist")
-        self.assertEqual([x.name for x in v.products], ["PYTHON", "ROOT"])
-        self.assertEqual(legacy, sha256_file(self.paths.legacy_vlist_file("3.0")))  # untouched
-        with self.assertRaises(UsageError):
-            self.release("9.9", migrate=True)
-
-    def test_module_revision(self):
+    def test_released_modulefile_is_kept(self):
         self.draft("3.0", [("PYTHON", "V3.11.14"), ("ROOT", "V6.32.20_3.11.14")])
         self.release("3.0")
-        old_vlist = sha256_file(self.paths.vlist_file("3.0"))
         old_module = sha256_file(self.paths.module_file("ROOT/V6.32.20_3.11.14"))
         with open(os.path.join(self.tool_root, "modulefiles", "ROOT", "template.tcl"), "a") as f:
             f.write("setenv ROOT_FIXED 1\n")
-        self.draft("3.0.1", [("PYTHON", "V3.11.14"), ("ROOT", "V6.32.20_3.11.14")])
-        self.release("3.0.1", module_revs=["ROOT/V6.32.20_3.11.14"])
-        v = vlist_mod.load(self.paths.vlist_file("3.0.1"))
-        self.assertEqual(v.products[1].module, "ROOT/V6.32.20_3.11.14-m2")
-        with open(self.paths.module_file("ROOT/V6.32.20_3.11.14-m2")) as f:
-            self.assertIn("ROOT_FIXED", f.read())
-        self.assertEqual(old_vlist, sha256_file(self.paths.vlist_file("3.0")))
+        self.draft("3.1", [("PYTHON", "V3.11.14"), ("ROOT", "V6.32.20_3.11.14")])
+        rp = self.release("3.1")
+        self.assertEqual([pp.module_text for pp in rp.products], [None, None])
         self.assertEqual(old_module, sha256_file(self.paths.module_file("ROOT/V6.32.20_3.11.14")))
-        # without --module-rev the newest revision is used
-        self.draft("3.0.2", [("PYTHON", "V3.11.14"), ("ROOT", "V6.32.20_3.11.14")])
-        self.release("3.0.2")
-        self.assertEqual(vlist_mod.load(self.paths.vlist_file("3.0.2")).products[1].module, "ROOT/V6.32.20_3.11.14-m2")
-        # a revision needs an existing fixed modulefile
-        self.draft("y", [("HDF5", "V1.14.2")])
-        with self.assertRaisesRegex(UsageError, "no fixed modulefile to revise"):
-            self.release("y", module_revs=["HDF5/V1.14.2"])
-        with self.assertRaises(UsageError):
-            self.release("y", module_revs=["ROOT/V6.32.20_3.11.14"])
 
     def test_role(self):
         cfg = config.loads(config.dumps("client", "/x"), env={})
         self.draft("3.0", [("PYTHON", "V3.11.14")])
         with self.assertRaises(EnvError):
             release.release(self.paths, cfg, "3.0", tool_root=self.tool_root, tool=TOOL)
-
-
-class TestWithdraw(FakeServer):
-    def setUp(self):
-        super().setUp()
-        self.draft("3.0", [("PYTHON", "V3.11.14")])
-        self.release("3.0")
-        self.draft("3.1", [("PYTHON", "V3.11.14"), ("HDF5", "V1.14.2")])
-        self.release("3.1")
-
-    def withdraw(self, name, **kw):
-        release.withdraw(self.paths, self.cfg, name, tool=TOOL, **kw)
-
-    def test_withdraw(self):
-        vhash = sha256_file(self.paths.vlist_file("3.0"))
-        self.withdraw("3.0", reason="wrong HDF5", replaced_by="3.1")
-        with open(self.paths.withdrawn_file("3.0"), "rb") as f:
-            rec = release.withdrawn_loads(f.read())
-        self.assertEqual((rec["reason"], rec["replaced_by"]), ("wrong HDF5", "3.1"))
-        self.assertEqual(vhash, sha256_file(self.paths.vlist_file("3.0")))  # the vlist itself is untouched
-        self.assertFalse(self.writable(self.paths.withdrawn_file("3.0")))
-        with self.assertRaisesRegex(CheckFailed, "already withdrawn"):
-            self.withdraw("3.0", reason="again")
-        self.draft("3.0", [("PYTHON", "V3.11.14")])
-        with self.assertRaises(CheckFailed):
-            self.release("3.0")
-
-    def test_errors(self):
-        with self.assertRaises(CheckFailed):
-            self.withdraw("9.9", reason="x")
-        with self.assertRaises(CheckFailed):
-            self.withdraw("3.0", reason="x", replaced_by="9.9")
-        with self.assertRaises(CheckFailed):
-            self.withdraw("3.0", reason="x", replaced_by="3.0")
-        with self.assertRaises(UsageError):
-            self.withdraw("3.0", reason="  ")
 
 
 class TestRemoveOnServer(FakeServer):
@@ -376,7 +335,7 @@ class TestRemoveOnServer(FakeServer):
         self.version("HDF5", "V2.2.0", {"lib/libhdf5.so": b"staging"})
         cands = self.rel(inventory.gc_candidates(self.paths))
         self.assertEqual(cands, {"ROOT/V6.32.20_3.11.14", "ROOT/V6.32.20_3.11.14.manifest",
-                                 "ROOT/V6.32.20_3.11.14.buildinfo", "modulefiles/ROOT/V6.32.20_3.11.14"})
+                                 "ROOT/V6.32.20_3.11.14.recipe.yml", "modulefiles/ROOT/V6.32.20_3.11.14"})
         inventory.gc(self.paths, self.cfg, tool=TOOL, yes=True)
         self.assertFalse(os.path.exists(self.paths.version_dir("ROOT", "V6.32.20_3.11.14")))
         self.assertTrue(os.path.exists(self.paths.version_dir("HDF5", "V2.2.0")))
@@ -385,41 +344,62 @@ class TestRemoveOnServer(FakeServer):
         self.draft("3.0", [("PYTHON", "V3.11.14")])
         self.release("3.0")
 
-    def test_withdrawn(self):
-        release.withdraw(self.paths, self.cfg, "3.0", tool=TOOL, reason="x", replaced_by="3.1")
-        with self.assertRaisesRegex(CheckFailed, "withdrawn in favour of '3.1'"):
-            self.remove("3.1")
-        self.assertTrue(os.path.exists(self.paths.vlist_file("3.1")))
-        self.assertIn("vlist/3.0.withdrawn", self.rel(self.remove("3.0", "3.1", yes=False)))
-        self.remove("3.0", "3.1")
-        self.assertEqual(os.listdir(self.paths.vlist), ["drafts"])
+    def test_remove_versions(self):
+        # a version a vlist uses is refused, unless that vlist goes in the same command
+        with self.assertRaisesRegex(CheckFailed, "used by vlist 3.0; remove the vlist first"):
+            self.remove("ROOT/V6.32.20_3.11.14")
+        files = self.remove("3.0", "ROOT/V6.32.20_3.11.14", yes=False)
+        self.assertEqual(self.rel(files), {"vlist/3.0.yml", "modulefiles/vlist/3.0", "ROOT/V6.32.20_3.11.14",
+                                           "ROOT/V6.32.20_3.11.14.manifest", "ROOT/V6.32.20_3.11.14.recipe.yml",
+                                           "modulefiles/ROOT/V6.32.20_3.11.14"})
+        self.assertTrue(os.path.exists(self.paths.version_dir("ROOT", "V6.32.20_3.11.14")))
+        self.remove("3.0", "ROOT/V6.32.20_3.11.14")
+        for f in files:
+            self.assertFalse(os.path.lexists(f), f)
+        self.assertFalse(self.writable(self.paths.modulefiles))
+        # a version that was never released: its directory and saved recipe
+        self.version("HDF5", "V2.2.0", {"lib/libhdf5.so": b"staging"})
+        self.recipe("HDF5", "V2.2.0")
+        self.assertEqual(self.rel(self.remove("HDF5/V2.2.0")), {"HDF5/V2.2.0", "HDF5/V2.2.0.recipe.yml"})
+        self.assertFalse(os.path.exists(self.paths.version_dir("HDF5", "V2.2.0")))
 
     def test_errors(self):
-        with self.assertRaisesRegex(FormatError, "not released"):
+        with self.assertRaisesRegex(FormatError, "not on this node"):
             self.remove("3.0", "9.9")
+        with self.assertRaisesRegex(FormatError, "not on this node"):
+            self.remove("3.0", "ROOT/V9.9")
+        with self.assertRaisesRegex(FormatError, "is not a vlist name or <NAME>/<VERSION>"):
+            self.remove("root/V1")
         self.assertTrue(os.path.exists(self.paths.vlist_file("3.0")))  # nothing removed when one name is bad
 
 
 class TestCli(FakeServer):
+    def test_options_before_or_after_the_command(self):
+        from prod.cli import _parser
+        p = _parser()
+        for argv in (["--json", "list"], ["list", "--json"], ["-q", "release", "1.0"], ["release", "1.0", "-q"]):
+            ns = p.parse_args(argv)
+            self.assertTrue(ns.json or ns.quiet, argv)
+        ns = p.parse_args(["list"])
+        self.assertEqual((ns.json, ns.quiet), (False, False))
+
     def run_cli(self, *argv):
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
             code = cli.main(list(argv), tool_root=self.tool_root, products=self.products)
         return code, out.getvalue(), err.getvalue()
 
-    def test_release_and_withdraw(self):
+    def test_release(self):
         self.draft("3.0", [("PYTHON", "V3.11.14"), ("ROOT", "V6.32.20_3.11.14")])
         code, out, _ = self.run_cli("release", "3.0", "--check")
         self.assertEqual(code, 0)
         self.assertIn("check only", out)
         code, out, _ = self.run_cli("release", "3.0")
         self.assertEqual(code, 0)
-        self.assertIn("vlist hash sha256:", out)
+        self.assertNotIn("check only", out)
         code, _, err = self.run_cli("release", "3.0")
         self.assertEqual(code, 1)
         self.assertIn("already released", err)
-        code, out, _ = self.run_cli("withdraw", "3.0", "--reason", "test")
-        self.assertEqual((code, out.strip()), (0, "withdrew 3.0"))
 
     def test_remove(self):
         self.draft("3.0", [("PYTHON", "V3.11.14")])
@@ -427,7 +407,7 @@ class TestCli(FakeServer):
         code, out, _ = self.run_cli("remove", "3.0")
         self.assertEqual(code, 0)
         self.assertIn("vlist/3.0.yml", out)
-        self.assertIn("would be deleted; run 'prod remove 3.0 --yes'", out)
+        self.assertIn("would be deleted; run 'prodman remove 3.0 --yes'", out)
         self.assertTrue(os.path.exists(self.paths.vlist_file("3.0")))
         code, out, _ = self.run_cli("remove", "3.0", "--yes")
         self.assertEqual(code, 0)
@@ -438,17 +418,17 @@ class TestCli(FakeServer):
         self.assertFalse(os.path.exists(self.paths.version_dir("PYTHON", "V3.11.14")))
         code, _, err = self.run_cli("remove", "3.0", "--yes")
         self.assertEqual(code, 1)
-        self.assertIn("not released", err)
+        self.assertIn("not on this node", err)
 
     def test_usage(self):
         self.assertEqual(self.run_cli("release")[0], 2)
-        self.assertEqual(self.run_cli("withdraw", "3.0")[0], 2)  # --reason is required
+        self.assertEqual(self.run_cli("withdraw", "3.0")[0], 2)  # no such command
         self.assertEqual(self.run_cli("bogus")[0], 2)
         code, _, err = self.run_cli("sync", "3.1")
         self.assertEqual(code, 3)  # sync runs only on clients
         self.assertIn("role is 'client'", err)
         code, out, _ = self.run_cli("--version")
-        self.assertEqual((code, out.strip()), (0, f"prod {TOOL}"))
+        self.assertEqual((code, out.strip()), (0, f"prodman {TOOL}"))
 
 
 if __name__ == "__main__":

@@ -13,11 +13,10 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 
 from .errors import EnvError, FormatError
-from .yamlutil import check_format, check_text, load_mapping, quote
+from .yamlutil import check_text, load_mapping, quote
 
-FORMAT = 1
 ROLES = ("client", "server")
-_KEYS = ("format", "role", "server", "ssh_options")
+_KEYS = ("role", "server", "ssh_options")
 _REMOTE_RE = re.compile(r"^(?:[A-Za-z0-9._-]+@)?[A-Za-z0-9._-]+:(/.*)$")
 _PATH_RE = re.compile(r"^/[A-Za-z0-9._/-]*$")
 
@@ -32,11 +31,11 @@ class Paths:
         self.versions = os.path.join(self.prod, "versions")
         self.conf = os.path.join(self.prod, "etc", "prod.conf")
         self.state = os.path.join(self.prod, "state")
-        self.trusted = os.path.join(self.state, "trusted")
         self.history = os.path.join(self.state, "history.jsonl")
         self.lock = os.path.join(self.state, "lock")
         self.tmp = os.path.join(self.state, "tmp")
-        self.packages_record = os.path.join(self.state, "packages.yml")
+        # the system package lists: edited on the server, a read-only copy of the server's on a client (prodman sync)
+        self.packages = os.path.join(self.products, "packages")
         self.vlist = os.path.join(self.products, "vlist")
         self.drafts = os.path.join(self.vlist, "drafts")
         self.modulefiles = os.path.join(self.products, "modulefiles")
@@ -44,26 +43,17 @@ class Paths:
     def vlist_file(self, name):
         return os.path.join(self.vlist, name + ".yml")
 
-    def withdrawn_file(self, name):
-        return os.path.join(self.vlist, name + ".withdrawn")
-
-    def legacy_vlist_file(self, name):
-        return os.path.join(self.vlist, name + ".vlist")
-
     def version_dir(self, product, version):
         return os.path.join(self.products, product, version)
 
     def manifest_file(self, product, version):
         return os.path.join(self.products, product, version + ".manifest")
 
-    def buildinfo_file(self, product, version):
-        return os.path.join(self.products, product, version + ".buildinfo")
-
     def recipe_file(self, product, version):
         return os.path.join(self.products, product, version + ".recipe.yml")  # recipe.SAVED_SUFFIX
 
     def module_file(self, module):
-        """`ROOT/V6.32.20_3.11.14[-m2]` -> <Products>/modulefiles/ROOT/V6.32.20_3.11.14[-m2]"""
+        """`ROOT/V6.32.20_3.11.14` -> <Products>/modulefiles/ROOT/V6.32.20_3.11.14"""
         return os.path.join(self.modulefiles, *module.split("/"))
 
     def bundle_file(self, name):
@@ -81,7 +71,7 @@ def products_dir_of(tool_root):
     versions = os.path.dirname(real)
     prod = os.path.dirname(versions)
     if os.path.basename(versions) != "versions" or os.path.basename(prod) != ".prod":
-        raise EnvError(f"prod is not installed (running from {real}); run install.sh first")
+        raise EnvError(f"prodman is not installed (running from {real}); run install.sh first")
     record = os.path.join(real, "PRODUCTS")
     try:
         with open(record, encoding="utf-8") as f:
@@ -148,9 +138,6 @@ def loads(data, env=None):
     """Parse prod.conf. PROD_SERVER in env overrides 'server'."""
     env = os.environ if env is None else env
     doc = load_mapping(data, "prod.conf")
-    if "format" not in doc:
-        raise FormatError("prod.conf: missing field 'format'")
-    check_format(doc["format"], FORMAT, "prod.conf")
     unknown = [k for k in doc if k not in _KEYS]
     if unknown:
         raise FormatError(f"prod.conf: unknown fields: {', '.join(map(str, unknown))}")
@@ -182,7 +169,7 @@ def load(paths, env=None):
 
 def dumps(role, server=None, ssh_options=None):
     """Write a prod.conf (used by install.sh)."""
-    lines = [f"format: {quote(str(FORMAT))}", f"role: {quote(role)}"]
+    lines = [f"role: {quote(role)}"]
     if server is not None:
         parse_server(server)
         lines.append(f"server: {quote(server)}")

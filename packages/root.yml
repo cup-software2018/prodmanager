@@ -1,5 +1,4 @@
-# ROOT: running it and building code against it ("for ROOT" in the legacy postinstall.sh).
-format: "1"
+# ROOT: running it and building code against it.
 group: "root"
 description: "ROOT runtime and development dependencies"
 products: ["ROOT"]
@@ -39,7 +38,7 @@ packages:
   - "libcurl-devel"
 optional:
   # R bindings. R-Rcpp-devel and R-RInside-devel are not in the AlmaLinux 9 / EPEL repositories
-  # (checked 2026-11-19); in the legacy postinstall.sh they made the whole line fail.
+  # (checked 2026-11-19).
   - "R-devel"
   - "R-Rcpp-devel"
   - "R-RInside-devel"

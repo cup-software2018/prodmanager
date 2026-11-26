@@ -9,9 +9,6 @@ One products server builds and releases them. Every node installs **the same byt
 - **Not in this repository:** the product binaries, the released vlists and the manifests. They live on the products
   server.
 
-> **Status:** in use on the products server (cupdev0) and on cupdev1. The other nodes still use the old
-> `install_products.sh` until they are moved ([client manual, section 9](docs/manual-client.md#9-moving-a-node-from-the-old-system)).
-
 ## Documentation
 
 | Document | For |
@@ -65,9 +62,9 @@ prod verify
 | `bin/prod`, `lib/prod/` | The tool (system python3 3.9 + PyYAML) |
 | `shell/` | `setup_prod.sh`, `setup_prod.csh` |
 | `modulefiles/<NAME>/` | Modulefile template (`template.tcl`, optional `generate`); `_common/` has shared helpers |
-| `recipes/<NAME>/` | Per version: `V<version>.yml` (dependencies, notes), and for products we build: `V<version>.options` (cmake) or `V<version>.requirements.txt` (pip). Per product: `build.sh`, `buildinfo.sh` |
-| `recipes/_common/` | Helpers shared by the `build.sh` scripts; `save-recipe.py` (keeps a recipe next to its version) |
-| `recipes/<NAME>/check/` | Test programs that `build.sh` runs against a new installation (HDF5, CUPDATAMODEL, CUPDAQ) |
+| `build-recipes/<NAME>/` | Per version: `<VERSION>.yml` (depends, source, options; PYTHON also `<VERSION>.requirements.txt`). Per product: `build.sh`, `buildinfo.sh` |
+| `build-recipes/_common/` | Helpers shared by the `build.sh` scripts; `save-recipe.py` (keeps a recipe and its buildinfo next to its version) |
+| `build-recipes/<NAME>/check/` | Test programs that `build.sh` runs against a new installation (HDF5, CUPDATAMODEL, CUPDAQ) |
 | `packages/` | System package lists, by group |
 | `tests/` | Unit tests, sandbox test, real-data test |
 
@@ -77,14 +74,11 @@ prod verify
 /usr/bin/python3 -I tests/run_unit.py                    # unit tests (seconds)
 /usr/bin/python3 -I tests/sandbox/run.py                 # end to end: fake server and client, real install.sh,
                                                          # prod, rsync, ssh to localhost, environment-modules
-/usr/bin/python3 -I tests/realdata/env_equivalence.py    # real products: old setup vs. new modulefiles
 ```
 
-- The first two work only in temporary directories. They never touch the real Products, the server or `$HOME`.
+- Both work only in temporary directories. They never touch the real Products, the server or `$HOME`.
   The sandbox needs password-less `ssh localhost` (skip it with `--no-ssh`). It keeps its directory when it fails
   (or with `--keep`).
-- The third only reads. For each old vlist on this node it compares the environment of the old
-  `~/setup_prod.sh <vlist>` with the new modulefiles, and reports differences that are not intended.
 
 ## Development
 

@@ -1,5 +1,4 @@
-# CAEN HV wrapper and pycaenhv ("pycaenhv" in the server's legacy postinstall.sh).
-format: "1"
+# CAEN HV wrapper and pycaenhv.
 group: "caen"
 description: "CAENHVWRAPPER and pycaenhv dependencies"
 products: ["CAENHVWRAPPER"]

@@ -7,6 +7,7 @@ import tempfile
 import unittest
 
 from prod import config, fsutil, state
+from prod.errors import CheckFailed
 
 from .test_sync import FakeClient
 
@@ -29,10 +30,8 @@ class Installed(FakeClient):
         env.update(extra)
         return env
 
-    def install(self, *args, check=True, version="v0.1", link_home=True):
-        cmd = [os.path.join(REPO, "install.sh"), "--products", self.cprod]
-        if link_home:  # self.cprod is not $HOME/Products; act like a real node
-            cmd.append("--link-home")
+    def install(self, *args, check=True, version="v0.1"):
+        cmd = [os.path.join(REPO, "install.sh"), "--products_dir", self.cprod]
         if version:
             cmd += ["--version-name", version]
         out = subprocess.run(cmd + list(args), env=self.env(), capture_output=True, text=True,
@@ -49,14 +48,23 @@ class Installed(FakeClient):
 
 class TestInstall(Installed):
     def test_install(self):
+        # a link left by a version that still called the tool 'prod' goes away
+        os.makedirs(os.path.join(self.home, ".local", "bin"))
+        os.symlink(os.path.join(self.cprod, ".prod", "current", "bin", "prod"),
+                   os.path.join(self.home, ".local", "bin", "prod"))
         out = self.install("--role", "client", "--server", self.products)
-        self.assertIn("installed prod v0.1", out.stdout)
+        self.assertFalse(os.path.lexists(os.path.join(self.home, ".local", "bin", "prod")))
+        self.assertIn("installed prodman v0.1", out.stdout)
         prod = os.path.join(self.cprod, ".prod")
         self.assertEqual(os.readlink(os.path.join(prod, "current")), "versions/v0.1")
         v = os.path.join(prod, "versions", "v0.1")
-        for rel in ("bin/prod", "lib/prod/cli.py", "share/setup_prod.sh", "share/setup_prod.csh",
-                    "share/modulefiles", "share/recipes", "share/packages", "VERSION"):
+        for rel in ("bin/prodman", "lib/prod/cli.py", "share/setup_prod.sh", "share/setup_prod.csh",
+                    "share/modulefiles", "VERSION"):
             self.assertTrue(os.path.exists(os.path.join(v, rel)), rel)
+        for rel in ("share/recipes", "share/packages"):
+            self.assertFalse(os.path.exists(os.path.join(v, rel)), rel)
+        self.assertFalse(os.path.exists(os.path.join(self.cprod, "packages")))  # a client gets them by prodman sync
+        self.assertFalse(os.path.exists(os.path.join(self.cprod, "build-recipes")))  # a client has none
         self.assertFalse(any("__pycache__" in d for d, _, _ in os.walk(v)))
         self.assertFalse(os.lstat(os.path.join(v, "lib", "prod", "cli.py")).st_mode & 0o222)  # read-only
         with open(os.path.join(v, "share", "setup_prod.sh")) as f:
@@ -65,43 +73,17 @@ class TestInstall(Installed):
         self.assertEqual((cfg.role, cfg.server.path), ("client", self.products))
         self.assertEqual(os.readlink(os.path.join(self.home, "setup_prod.sh")),
                          os.path.join(prod, "current", "share", "setup_prod.sh"))
-        self.assertEqual(os.readlink(os.path.join(self.home, ".local", "bin", "prod")),
-                         os.path.join(prod, "current", "bin", "prod"))
-        self.assertEqual([e["command"] for e in state.read_history(self.cpaths)][-2:], ["install", "doctor"])
+        self.assertEqual(os.readlink(os.path.join(self.home, ".local", "bin", "prodman")),
+                         os.path.join(prod, "current", "bin", "prodman"))
+        self.assertEqual([e["command"] for e in state.read_history(self.cpaths)][-1:], ["install"])
         # the installed prod finds its Products from its own location
-        out = subprocess.run([os.path.join(self.home, ".local", "bin", "prod"), "list"], env=self.env(),
+        out = subprocess.run([os.path.join(self.home, ".local", "bin", "prodman"), "list"], env=self.env(),
                              capture_output=True, text=True)
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertIn("tool    v0.1", out.stdout)
         self.assertIn(f"role    client, server {self.products}", out.stdout)
 
-    def test_test_install_leaves_home_alone(self):
-        """--products elsewhere (a test install) must not touch the real ~/setup_prod.sh."""
-        legacy = os.path.join(self.home, "setup_prod.sh")
-        with open(legacy, "w") as f:
-            f.write("# legacy setup\n")
-        out = self.install("--role", "client", "--server", self.products, link_home=False)
-        self.assertIn("nothing in", out.stdout)
-        self.assertEqual(sorted(os.listdir(self.home)), ["setup_prod.sh"])  # no .local, no .csh, no .pre-prod
-        with open(legacy) as f:
-            self.assertEqual(f.read(), "# legacy setup\n")
-        self.assertNotIn("does not point", out.stdout)
-        self.assertIn("a test install", out.stdout)
-        # the tool works when run by its path
-        prod = os.path.join(self.cprod, ".prod", "current", "bin", "prod")
-        out = subprocess.run([prod, "list"], env=self.env(), capture_output=True, text=True)
-        self.assertEqual(out.returncode, 0, out.stderr)
-        # Products = ~/Products: linked by default
-        real = os.path.join(self.home, "Products")
-        os.rename(self.cprod, real)
-        os.symlink(real, self.cprod)  # keep the fixture's path valid
-        out = subprocess.run([os.path.join(REPO, "install.sh"), "--products", real, "--version-name", "v0.2"],
-                             env=self.env(), capture_output=True, text=True, stdin=subprocess.DEVNULL)
-        self.assertEqual(out.returncode, 0, out.stderr)
-        self.assertEqual(os.readlink(legacy), os.path.join(real, ".prod", "current", "share", "setup_prod.sh"))
-        self.assertTrue(os.path.exists(legacy + ".pre-prod"))
-
-    def test_upgrade_keeps_config_and_old_versions(self):
+    def test_upgrade_keeps_config_and_only_the_new_version(self):
         self.install("--role", "client", "--server", self.products)
         with open(self.cpaths.conf, "ab") as f:
             f.write(b'ssh_options: ["-o", "BatchMode=yes"]\n')
@@ -112,52 +94,68 @@ class TestInstall(Installed):
         with open(self.cpaths.conf, "rb") as f:
             self.assertEqual(conf, f.read())
         self.assertEqual(os.readlink(os.path.join(self.cprod, ".prod", "current")), "versions/v0.5")
-        self.assertEqual(sorted(os.listdir(os.path.join(self.cprod, ".prod", "versions"))),
-                         ["v0.3", "v0.4", "v0.5"])
+        self.assertEqual(os.listdir(os.path.join(self.cprod, ".prod", "versions")), ["v0.5"])
         # the same version again needs --force
         out = self.install(version="v0.5", check=False)
         self.assertNotEqual(out.returncode, 0)
         self.assertIn("already installed", out.stderr)
         self.install("--force", version="v0.5")
 
-    def test_legacy_setup_prod_is_kept(self):
-        legacy = os.path.join(self.home, "setup_prod.sh")
-        with open(legacy, "w") as f:
-            f.write("# legacy\n")
-        out = self.install("--role", "client", "--server", self.products)
-        self.assertIn("setup_prod.sh.pre-prod", out.stdout)
-        with open(legacy + ".pre-prod") as f:
-            self.assertEqual(f.read(), "# legacy\n")
-        self.assertTrue(os.path.islink(legacy))
-
-    def test_keep_legacy_setup(self):
-        legacy = os.path.join(self.home, "setup_prod.sh")
-        with open(legacy, "w") as f:
-            f.write("# legacy\n")
-        out = self.install("--role", "server")  # keeping it is the default on a server
-        self.assertIn("~/setup_prod.sh is left as it is", out.stdout)
-        self.assertFalse(os.path.islink(legacy))
-        with open(legacy) as f:
-            self.assertEqual(f.read(), "# legacy\n")
-        # nothing new that the legacy install_products.sh would copy with 'setup_prod*'
-        self.assertEqual(sorted(n for n in os.listdir(self.home) if n.startswith("setup_prod")), ["setup_prod.sh"])
-        self.assertTrue(os.path.islink(os.path.join(self.home, ".local", "bin", "prod")))
-        self.assertIn("ok    tool", out.stdout)  # doctor accepts the kept legacy script
-        self.assertNotIn("does not point to", out.stdout)
-        # an upgrade keeps it too; only --replace-legacy-setup switches
+    def test_server_build_recipes(self):
+        self.install("--role", "server")
+        br = os.path.join(self.cprod, "build-recipes")
+        for rel in ("_common/build-common.sh", "_common/save-recipe.py", "ROOT/build.sh", "ROOT/V6.32.20_3.11.14.yml",
+                    "PYTHON/V3.11.14.yml"):
+            self.assertTrue(os.path.exists(os.path.join(br, rel)), rel)
+        self.assertTrue(os.access(os.path.join(br, "ROOT"), os.W_OK))  # people write recipes there
+        self.assertTrue(os.path.isdir(os.path.join(self.cprod, "vlist", "drafts")))
+        self.assertTrue(os.path.exists(os.path.join(self.cprod, "packages", "root.yml")))  # edited on the server
+        with open(os.path.join(self.cprod, "packages", "root.yml"), "a") as f:
+            f.write("# changed here\n")
+        # an upgrade replaces the scripts, keeps the recipes (changed or new), removes nothing
+        with open(os.path.join(br, "ROOT", "V6.32.20_3.11.14.yml"), "a") as f:
+            f.write("# changed here\n")
+        with open(os.path.join(br, "ROOT", "V9.9.9.yml"), "w") as f:
+            f.write("# new here\n")
+        with open(os.path.join(br, "ROOT", "build.sh"), "a") as f:
+            f.write("# stale\n")
         self.install(version="v0.2")
-        self.assertFalse(os.path.islink(legacy))
-        out = self.install("--replace-legacy-setup", version="v0.3")
-        self.assertTrue(os.path.islink(legacy))
-        with open(legacy + ".pre-prod") as f:
-            self.assertEqual(f.read(), "# legacy\n")
+        with open(os.path.join(br, "ROOT", "V6.32.20_3.11.14.yml")) as f:
+            self.assertTrue(f.read().endswith("# changed here\n"))
+        self.assertTrue(os.path.exists(os.path.join(br, "ROOT", "V9.9.9.yml")))
+        with open(os.path.join(br, "ROOT", "build.sh")) as f:
+            self.assertNotIn("# stale", f.read())
+        with open(os.path.join(self.cprod, "packages", "root.yml")) as f:
+            self.assertTrue(f.read().endswith("# changed here\n"))  # package lists are kept too
+        # the scripts there find the installed tool
+        out = subprocess.run(["/usr/bin/python3", "-I", os.path.join(br, "_common", "recipeinfo.py"),
+                              os.path.join(br, "ROOT", "V6.32.20_3.11.14.yml")], capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("depends\tPYTHON\tV3.11.14", out.stdout)
 
-    def test_client_can_keep_legacy_setup_too(self):
-        legacy = os.path.join(self.home, "setup_prod.sh")
-        with open(legacy, "w") as f:
-            f.write("# legacy\n")
-        self.install("--role", "client", "--server", self.products, "--keep-legacy-setup")
-        self.assertFalse(os.path.islink(legacy))
+    def test_server_products_through_a_symlink(self):
+        # ~/Products is often a symlink to a local disk; rsync 3.2.7 refuses such a destination unless resolved
+        link = os.path.join(self.tmp, "ProductsLink")
+        os.symlink(self.cprod, link)
+        out = subprocess.run([os.path.join(REPO, "install.sh"), "--products_dir", link, "--role", "server",
+                              "--version-name", "v0.1"], env=self.env(), capture_output=True, text=True,
+                             stdin=subprocess.DEVNULL)
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertTrue(os.path.exists(os.path.join(self.cprod, "build-recipes", "ROOT", "build.sh")))
+
+    def test_real_file_is_kept_as_bak(self):
+        path = os.path.join(self.home, "setup_prod.sh")
+        with open(path, "w") as f:
+            f.write("# my own\n")
+        out = self.install("--role", "server")  # linked on a server too
+        self.assertIn("setup_prod.sh.bak", out.stdout)
+        with open(path + ".bak") as f:
+            self.assertEqual(f.read(), "# my own\n")
+        for name, target in (("setup_prod.sh", "share/setup_prod.sh"), ("setup_prod.csh", "share/setup_prod.csh"),
+                             (".local/bin/prodman", "bin/prodman")):
+            self.assertEqual(os.readlink(os.path.join(self.home, name)),
+                             os.path.join(self.cprod, ".prod", "current", target))
+        self.assertNotIn("does not point to", out.stdout)
 
     def test_errors(self):
         out = self.install(check=False)  # no prod.conf yet and no --role
@@ -168,7 +166,7 @@ class TestInstall(Installed):
         self.assertIn("invalid --role or --server", out.stderr)
         out = self.install("--role", "server", version="bad/name", check=False)
         self.assertIn("invalid version name", out.stderr)
-        out = subprocess.run([os.path.join(REPO, "install.sh"), "--products", os.path.join(self.tmp, "nope"),
+        out = subprocess.run([os.path.join(REPO, "install.sh"), "--products_dir", os.path.join(self.tmp, "nope"),
                               "--version-name", "v1"], env=self.env(), capture_output=True, text=True)
         self.assertIn("does not exist", out.stderr)
         out = self.install("--role", "server", version="", check=False)  # without --version-name
@@ -193,7 +191,6 @@ class TestSetupProd(Installed):
 echo "VLIST=$PROD_VLIST"
 echo "PYTHON_HOME=$PYTHON_HOME"
 echo "ROOTSYS=$ROOTSYS"
-echo "PRODUCTS_DIR=$PRODUCTS_DIR"
 . {self.setup} 3.1
 echo "VLIST=$PROD_VLIST"
 echo "ROOTSYS=${{ROOTSYS:-unset}}"
@@ -208,7 +205,6 @@ echo "PATH=$PATH"
         self.assertIn("VLIST=3.0", lines)
         self.assertIn(f"PYTHON_HOME={self.sp}/PYTHON/V3.11.14", lines)
         self.assertIn(f"ROOTSYS={self.sp}/ROOT/V6.32.20_3.11.14", lines)
-        self.assertIn(f"PRODUCTS_DIR={self.cprod}", lines)
         self.assertIn("VLIST=3.1", lines)
         self.assertIn("ROOTSYS=unset", lines)  # switching vlists unloads ROOT
         self.assertIn(f"HDF5SYS={self.sp}/HDF5/V1.14.2", lines)
@@ -222,22 +218,32 @@ echo "PATH=$PATH"
     def test_errors_return_nonzero(self):
         r = self.bash(f". {self.setup}; echo rc=$?")
         self.assertIn("rc=1", r.stdout)
-        self.assertIn("usage:", r.stderr)
-        self.assertIn("  3.0", r.stderr)
+        self.assertIn("usage:", r.stderr)  # not on a terminal: no question
+        self.assertIn("  1) 3.0", r.stderr)
         r = self.bash(f". {self.setup} 9.9; echo rc=$?")
         self.assertIn("rc=1", r.stdout)
-        self.assertIn("run 'prod sync 9.9'", r.stderr)
+        self.assertIn("run 'prodman sync 9.9'", r.stderr)
         r = self.bash(f"set -e; . {self.setup} 9.9; echo not reached")
         self.assertNotEqual(r.returncode, 0)
         self.assertNotIn("not reached", r.stdout)
 
-    def test_interactive_summary_and_withdrawn_warning(self):
-        from prod import release
-        release.withdraw(self.paths, self.cfg, "3.0", tool="t", reason="bad ROOT", replaced_by="3.1")
-        self.sync("3.0", force=True)
+    @unittest.skipUnless(shutil.which("script"), "needs script(1) for a terminal")
+    def test_choose_a_release_on_a_terminal(self):
+        def on_terminal(answer):
+            cmd = f"bash --noprofile --norc -i -c '. {self.setup}; echo rc=$? VLIST=${{PROD_VLIST:-none}}'"
+            return subprocess.run(["script", "-qec", cmd, "/dev/null"], input=answer, capture_output=True,
+                                  text=True, env=self.env(), timeout=60).stdout
+        out = on_terminal("2\n")
+        self.assertIn("1) 3.0", out)
+        self.assertIn("choose a release", out)
+        self.assertIn("rc=0 VLIST=3.1", out)
+        self.assertIn("rc=0 VLIST=3.0", on_terminal("3.0\n"))  # by name
+        self.assertIn("rc=0 VLIST=none", on_terminal("\n"))     # Enter: nothing loaded
+        self.assertIn("rc=1 VLIST=none", on_terminal("9\n"))    # no such release
+
+    def test_interactive_summary(self):
         r = subprocess.run(["bash", "--noprofile", "--norc", "-i", "-c", f". {self.setup} 3.0"],
                            env=self.env(), capture_output=True, text=True, stdin=subprocess.DEVNULL)
-        self.assertIn('vlist 3.0 was withdrawn: "bad ROOT"', r.stderr)
         self.assertIn("prod: vlist 3.0: PYTHON/V3.11.14 ROOT/V6.32.20_3.11.14", r.stderr)
 
     def test_root_alone_loads_its_dependency(self):
@@ -258,8 +264,9 @@ module load HDF5/V1.14.2
 
     def test_wrong_dependency_version_is_refused(self):
         other = os.path.join(self.cprod, "modulefiles", "PYTHON", "V9.9")
-        with open(other, "w") as f:
-            f.write("#%Module\nconflict PYTHON\nsetenv PYTHON_HOME /somewhere/else\n")
+        with fsutil.opened(os.path.join(self.cprod, "modulefiles")):  # read-only after sync
+            with open(other, "w") as f:
+                f.write("#%Module\nconflict PYTHON\nsetenv PYTHON_HOME /somewhere/else\n")
         r = self.bash(f""". /usr/share/Modules/init/bash
 module use {self.cprod}/modulefiles
 module load PYTHON/V9.9
@@ -295,7 +302,7 @@ exit 0
 """
 
 
-class TestDoctorAndPostinstall(Installed):
+class TestEnvironmentAndPostinstall(Installed):
     def setUp(self):
         super().setUp()
         self.install("--role", "client", "--server", self.products)
@@ -306,7 +313,7 @@ class TestDoctorAndPostinstall(Installed):
             with open(os.path.join(self.bin, name), "w") as f:
                 f.write(text)
             os.chmod(os.path.join(self.bin, name), 0o755)
-        self.prod = os.path.join(self.home, ".local", "bin", "prod")
+        self.prod = os.path.join(self.home, ".local", "bin", "prodman")
         self.dnf_log = os.path.join(self.tmp, "dnf.log")
 
     def run_prod(self, *args, missing=""):
@@ -322,25 +329,43 @@ class TestDoctorAndPostinstall(Installed):
                                            PROD_POSTINSTALL_LOG=os.path.join(self.tmp, "postinstall.log")))
 
     @unittest.skipUnless(HAVE_MODULES, "environment-modules is not installed")
-    def test_doctor_ok(self):
-        r = self.run_prod("doctor")
-        self.assertIn("ok    tool", r.stdout)
-        self.assertIn("ok    server           reachable, 2 released vlists", r.stdout)
-        self.assertIn("ok    packages", r.stdout)
-        self.assertIn("groups: base, python, root", r.stdout)  # groups follow the vlist's products
-        self.assertIn("WARN  record", r.stdout)  # postinstall has not run here
-        self.assertIn("ok    modules 3.0", r.stdout)
-        self.assertIn("ok    ldd 3.0          0 ELF files", r.stdout)
+    def test_verify_checks_the_environment(self):
+        r = self.run_prod("verify")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("warning", r.stdout)  # loads; packages installed; no missing libraries
+        r = self.run_prod("verify", "--quick", missing="gdbm-devel")
+        self.assertEqual(r.returncode, 0, r.stdout)  # a warning, not an error
+        self.assertIn("1 required system package(s) not installed: gdbm-devel", r.stdout)
+        # a vlist that no longer loads is an error
+        fsutil.unlock_tree(os.path.join(self.cprod, "modulefiles"))
+        with open(os.path.join(self.cprod, "modulefiles", "vlist", "3.0"), "a") as f:
+            f.write('error "broken on purpose"\n')
+        r = self.run_prod("verify", "--quick")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("'. setup_prod.sh 3.0' fails", r.stdout)
 
-    def test_doctor_missing_package(self):
-        r = self.run_prod("doctor", "--quick", missing="gdbm-devel")
-        self.assertEqual(r.returncode, 1)
-        self.assertIn("FAIL  packages         1 required package(s) missing", r.stdout)
-        self.assertIn("missing: gdbm-devel", r.stdout)
+    @unittest.skipUnless(HAVE_MODULES, "environment-modules is not installed")
+    def test_sync_checks_the_environment(self):
+        r = self.run_prod("sync", "3.1", missing="gdbm-devel")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("warning: 1 required system package(s) not installed: gdbm-devel", r.stdout)
+
+    @unittest.skipUnless(HAVE_MODULES, "environment-modules is not installed")
+    def test_release_refuses_a_vlist_that_does_not_load(self):
+        from prod import release
+        with open(os.path.join(self.tool_root, "modulefiles", "HDF5", "template.tcl"), "a") as f:
+            f.write('error "broken on purpose"\n')
+        self.version("HDF5", "V1.14.8", {"bin/h5dump": b"#!/bin/sh\n"})
+        self.recipe("HDF5", "V1.14.8")
+        self.draft("broken", [("HDF5", "V1.14.8")])
+        with self.assertRaisesRegex(CheckFailed, "the vlist does not load"):
+            release.release(self.paths, self.cfg, "broken", tool_root=self.tool_root, tool="t",
+                            check_environment=True)
+        self.assertFalse(os.path.exists(self.paths.vlist_file("broken")))  # nothing was released
+        self.assertFalse(os.path.exists(self.paths.manifest_file("HDF5", "V1.14.8")))
 
     @unittest.skipUnless(HAVE_MODULES and shutil.which("gcc"), "needs environment-modules and gcc")
-    def test_doctor_ldd_finds_missing_library(self):
+    def test_ldd_finds_missing_library(self):
         build = os.path.join(self.tmp, "build")
         os.makedirs(build)
         with open(os.path.join(build, "foo.c"), "w") as f:
@@ -351,39 +376,30 @@ class TestDoctorAndPostinstall(Installed):
                         os.path.join(build, "foo.c")], check=True)
         self.version("HDF5", "V1.14.9", {"bin/h5dump": b"#!/bin/sh\n"})
         vdir = os.path.join(self.products, "HDF5", "V1.14.9")
-        # the same program in places where its missing library is not counted: a Qt plugin (on demand), next to
-        # a bundled copy of the library (as pip wheels do), and a file the recipe lists in ldd_ignore
-        for rel in ("bin/needsfoo", "lib/Qt6/plugins/sqldrivers/libqsqlfoo.so", "lib/bundled/needsfoo",
-                    "lib/opt/needsfoo"):
+        # the same program in places where its missing library is not listed: a Qt plugin (on demand), and next
+        # to a bundled copy of the library (as pip wheels do)
+        for rel in ("bin/needsfoo", "lib/Qt6/plugins/sqldrivers/libqsqlfoo.so", "lib/bundled/needsfoo"):
             os.makedirs(os.path.dirname(os.path.join(vdir, rel)), exist_ok=True)
             subprocess.run(["gcc", "-o", os.path.join(vdir, rel), os.path.join(build, "main.c"), "-L" + build,
                             "-lprodfoo"], check=True)
         shutil.copy(os.path.join(build, "libprodfoo.so"), os.path.join(vdir, "lib", "bundled"))
         self.recipe("HDF5", "V1.14.9")
-        installed = os.path.join(self.cprod, ".prod", "current", "share", "recipes", "HDF5")
-        os.makedirs(installed, exist_ok=True)
-        mode = os.stat(installed).st_mode
-        os.chmod(installed, mode | 0o200)  # the installed tool is read-only
-        with open(os.path.join(installed, "V1.14.9.yml"), "w") as f:
-            f.write('format: "1"\nproduct: "HDF5"\nversion: "V1.14.9"\n'
-                    'ldd_ignore:\n  - {path: "lib/opt/*", reason: "optional test part"}\n')
-        os.chmod(installed, mode)
         self.draft("ldd", [("HDF5", "V1.14.9")])
-        self.release("ldd")
+        from prod import release
+        rp = release.release(self.paths, self.cfg, "ldd", tool_root=self.tool_root, tool="t", check_environment=True)
+        [w] = [x for x in rp.warnings if "shared libraries" in x]  # a warning to look at, not a failure
+        self.assertIn("1 missing shared libraries in 4 ELF files", w)
         self.sync("ldd")
-        r = self.run_prod("doctor", "ldd")
-        self.assertEqual(r.returncode, 1, r.stdout)
-        self.assertIn("FAIL  ldd ldd          1 missing shared libraries in 5 ELF files", r.stdout)
+        r = self.run_prod("verify", "ldd")
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("1 missing shared libraries in 4 ELF files", r.stdout)
         self.assertIn("HDF5/V1.14.9/bin/needsfoo: libprodfoo.so", r.stdout)
-        self.assertIn("not counted: 1 Qt plugin/QML files", r.stdout)
-        self.assertIn("not counted: 1 files in the recipe's ldd_ignore (optional test part)", r.stdout)
         self.assertNotIn("bundled", r.stdout)
 
     def test_postinstall(self):
         r = self.postinstall("--check")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("check only", r.stdout)
-        self.assertFalse(os.path.exists(self.cpaths.packages_record))
         self.assertFalse(os.path.exists(self.dnf_log) and "install" in open(self.dnf_log).read())
 
         r = self.postinstall(fail="gdbm-devel R-Rcpp-devel")
@@ -396,19 +412,10 @@ class TestDoctorAndPostinstall(Installed):
         self.assertIn("dnf -y config-manager --set-enabled crb", log)
         self.assertIn("dnf -y install gdbm-devel", log)  # retried alone
         self.assertNotIn("update", log)
-        from prod import packages
-        with open(self.cpaths.packages_record, "rb") as f:
-            rec = packages.record_loads(f.read())
-        self.assertEqual(rec["groups"]["python"]["failed"], ["gdbm-devel"])
-        self.assertEqual(rec["groups"]["root"]["optional_failed"], ["R-Rcpp-devel"])
-        r = self.run_prod("doctor", "--quick")
-        self.assertIn("WARN  record", r.stdout)
-        self.assertIn("groups that failed when applied: python", r.stdout)
+        self.assertFalse(os.path.exists(os.path.join(self.cprod, ".prod", "state", "packages.yml")))  # no record
 
         r = self.postinstall()
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        r = self.run_prod("doctor", "--quick")
-        self.assertIn("ok    record", r.stdout)
 
     def test_postinstall_needs_root(self):
         script = os.path.join(self.cprod, ".prod", "current", "share", "postinstall.sh")
@@ -420,8 +427,7 @@ class TestDoctorAndPostinstall(Installed):
 
 class TestClassifyMissing(unittest.TestCase):
     def test_classify(self):
-        from prod import recipe
-        from prod.doctor import classify_missing
+        from prod.envcheck import classify_missing
         tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, tmp)
         v = os.path.join(tmp, "PYTHON", "V3")
@@ -434,25 +440,19 @@ class TestClassifyMissing(unittest.TestCase):
             "qml": (os.path.join(sp, "PyQt5", "Qt5", "qml", "QtGamepad", "libplugin.so"), "libQt5Gamepad.so.5"),
             "platform plugin": (os.path.join(sp, "PyQt6", "Qt6", "plugins", "platforms", "libqxcb.so"),
                                 "libxcb-cursor.so.0"),
-            "ignored": (os.path.join(sp, "numba", "tbbpool.so"), "libtbb.so.12"),
+            "optional": (os.path.join(sp, "numba", "tbbpool.so"), "libtbb.so.12"),
             "real": (os.path.join(sp, "pyodbc.so"), "libodbc.so.2"),
         }
         missing = list(files.values())
-        owner = {f: (v, ("PYTHON", "V3")) for f, _ in missing}
-        rec = recipe.Recipe("PYTHON", "V3", ldd_ignore=[("lib/site-packages/numba/tbbpool*.so", "optional TBB")])
-        real, on_demand, ignored = classify_missing(missing, owner, {("PYTHON", "V3"): rec})
-        self.assertEqual(real, [files["platform plugin"], files["real"]])
+        owner = {f: v for f, _ in missing}
+        real, on_demand = classify_missing(missing, owner)
+        self.assertEqual(real, [files["platform plugin"], files["optional"], files["real"]])
         self.assertEqual(on_demand, {files["sql plugin"][0], files["qml"][0]})
-        self.assertEqual(ignored, {"optional TBB": {files["ignored"][0]}})
-        # without a recipe nothing is ignored
-        real, _, ignored = classify_missing(missing, owner, {})
-        self.assertIn(files["ignored"], real)
-        self.assertEqual(ignored, {})
 
 
 class TestParseLdd(unittest.TestCase):
     def test_parse(self):
-        from prod.doctor import parse_ldd
+        from prod.envcheck import parse_ldd
         one = "\tlinux-vdso.so.1 (0x00007ffd)\n\tlibfoo.so => not found\n\tlibc.so.6 => /lib64/libc.so.6 (0x7f)\n"
         self.assertEqual(parse_ldd(one, ["/p/bin/a"]), [("/p/bin/a", "libfoo.so")])
         many = ("/p/bin/a:\n\tlibc.so.6 => /lib64/libc.so.6 (0x7f)\n"

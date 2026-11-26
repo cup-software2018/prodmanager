@@ -1,7 +1,7 @@
 #!/usr/bin/python3 -I
 """Print what Geant4's geant4make.sh sets, as modulefile lines. Run once by `prod release`.
 
-Like the legacy setup_GEANT4.sh: share/Geant4-<version>/geant4make/geant4make.sh if it exists,
+Uses share/Geant4-<version>/geant4make/geant4make.sh if it exists,
 otherwise share/Geant4/geant4make/geant4make.sh.
 """
 import os

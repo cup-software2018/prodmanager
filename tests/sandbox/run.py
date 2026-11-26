@@ -129,7 +129,7 @@ class Sandbox:
         for name, ver, deps in recipes:
             dep = "".join(f'\n  - {{name: "{d}", version: "{v}"}}' for d, v in deps)
             self.write(f"{r}/{name}/{ver}.yml",
-                       f'format: "1"\nproduct: "{name}"\nversion: "{ver}"\n' + (f"depends:{dep}\n" if deps else ""))
+                       f'product: "{name}"\nversion: "{ver}"\n' + (f"depends:{dep}\n" if deps else ""))
         git = ["git", "-C", self.repo] + GIT_ID
         subprocess.run(git + ["init", "-q"], check=True)
         subprocess.run(git + ["add", "-A"], check=True)
@@ -217,7 +217,7 @@ class Sandbox:
         os.makedirs(p, exist_ok=True)
         os.makedirs(home, exist_ok=True)
         # each node's Products is next to its home, not ~/Products: link HOME as a real node would
-        return self.run(node, [os.path.join(self.repo, "install.sh"), "--products", p, "--link-home"] + list(args))
+        return self.run(node, [os.path.join(self.repo, "install.sh"), "--products_dir", p, "--link-home"] + list(args))
 
     def server_file(self, rel):
         return os.path.join(self.node("server")[0], rel)
@@ -252,7 +252,6 @@ class Sandbox:
         self.prod("server", "release", "--migrate", "3.0", "--check", contains=["check only", "staging -> frozen"])
         self.prod("server", "release", "--migrate", "3.0", contains=["vlist hash sha256:"])
         self.write(os.path.join(sp, "vlist", "drafts", "3.1.yml"), """
-            format: "1"
             description: "PYTHON 3.11 + ROOT 6.32 + HDF5 1.14.2 + Geant4 11.1 (sandbox)"
             products:
               - {name: "PYTHON", version: "V3.11.14"}
@@ -373,27 +372,21 @@ class Sandbox:
         lock = os.path.join(cp, ".prod", "state", "lock")
         self.run("clientA", f"flock -x {lock} prod sync 3.1", shell=True, expect=4, contains=["another prod"])
 
-        self.step("server: a vlist in a newer format makes clients ask for a newer tool (exit 5)")
-        self.write(self.server_file("vlist/9.0.yml"), 'format: "2"\ndescription: "from the future"\n')
-        self.prod("clientA", "sync", "9.0", expect=5, contains=["update the tool"])
-        os.unlink(self.server_file("vlist/9.0.yml"))
-
         self.step("server: a new version released with its saved recipe, without a tool upgrade; clients get it")
         self.write(self.server_file("HDF5/V1.14.3/bin/h5dump"), "#!/bin/sh\necho h5dump 1.14.3\n", 0o755)
         recipe = os.path.join(self.repo, "recipes", "HDF5", "V1.14.3.yml")  # in the clone only, not in tool v0.1
-        self.write(recipe, 'format: "1"\nproduct: "HDF5"\nversion: "V1.14.3"\n')
+        self.write(recipe, 'product: "HDF5"\nversion: "V1.14.3"\n')
         self.write(os.path.join(sp, "vlist", "drafts", "3.2.yml"), """
-            format: "1"
             description: "HDF5 1.14.3"
             products:
               - {name: "HDF5", version: "V1.14.3"}
             """)
         self.prod("server", "release", "3.2", "--check", expect=1, contains=["no recipe: neither"])
-        self.run("server", [os.path.join(self.repo, "recipes", "_common", "save-recipe.py"), recipe, "--products", sp],
+        self.run("server", [os.path.join(self.repo, "recipes", "_common", "save-recipe.py"), recipe, "--products_dir", sp],
                  contains=["V1.14.3.recipe.yml", "with uncommitted changes in recipes/HDF5/"])
         self.prod("server", "release", "3.2", contains=["recipe HDF5/V1.14.3.recipe.yml (recipes/HDF5/V1.14.3.yml at "
                                                        "commit", "vlist hash sha256:"])
-        self.run("server", [os.path.join(self.repo, "recipes", "_common", "save-recipe.py"), recipe, "--products", sp],
+        self.run("server", [os.path.join(self.repo, "recipes", "_common", "save-recipe.py"), recipe, "--products_dir", sp],
                  expect=1, contains=["already released"])
         with open(self.server_file("modulefiles/HDF5/V1.14.3")) as fh:
             if "# recipe: HDF5/V1.14.3.recipe.yml (recipes/HDF5/V1.14.3.yml at commit" not in fh.read():
@@ -410,7 +403,6 @@ class Sandbox:
         self.install("server")
         self.prod("server", "--version", contains=["prod v0.2"])
         self.write(os.path.join(sp, "vlist", "drafts", "3.1.1.yml"), """
-            format: "1"
             description: "3.1 with the fixed ROOT modulefile"
             products:
               - {name: "PYTHON", version: "V3.11.14"}

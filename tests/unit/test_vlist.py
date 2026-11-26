@@ -3,14 +3,9 @@ import tempfile
 import unittest
 
 from prod import vlist
-from prod.errors import FormatError, FormatTooNew
-
-H1 = "sha256:" + "1" * 64
-H2 = "sha256:" + "2" * 64
-H3 = "sha256:" + "3" * 64
+from prod.errors import FormatError
 
 DRAFT = b"""\
-format: 1
 description: PYTHON 3.11 + ROOT 6.32
 products:
   - {name: PYTHON, version: V3.11.14}
@@ -22,12 +17,8 @@ def released(**over):
     v = vlist.Vlist(
         description="PYTHON 3.11 + ROOT 6.32 (lsim)",
         released="2026-12-01T10:00:00+09:00",
-        released_by="prod v0.1 on cupdev0",
-        bundle=H3,
-        products=[
-            vlist.Product("PYTHON", "V3.11.14", H1, "PYTHON/V3.11.14", H2),
-            vlist.Product("ROOT", "V6.32.20_3.11.14", H1, "ROOT/V6.32.20_3.11.14-m2", H2),
-        ],
+        released_by="prodman v0.1 on cupdev0",
+        products=[vlist.Product("PYTHON", "V3.11.14"), vlist.Product("ROOT", "V6.32.20_3.11.14")],
     )
     for k, val in over.items():
         setattr(v, k, val)
@@ -38,23 +29,18 @@ class TestDraft(unittest.TestCase):
     def test_draft_values_are_strings(self):
         v = vlist.loads(DRAFT, draft=True)
         self.assertTrue(v.is_draft)
-        self.assertEqual(v.format, "1")
         self.assertEqual([(p.name, p.version) for p in v.products],
                          [("PYTHON", "V3.11.14"), ("ROOT", "V6.32.20_3.11.14")])
 
     def test_numbers_and_dates_stay_strings(self):
-        v = vlist.loads(b"format: 1\ndescription: 3.10\nproducts:\n  - {name: A, version: V1}\n", draft=True)
+        v = vlist.loads(b"description: 3.10\nproducts:\n  - {name: A, version: V1}\n", draft=True)
         self.assertEqual(v.description, "3.10")  # must not become the float 3.1
-        v = vlist.loads(b"format: 1\ndescription: 2026-12-01\nproducts:\n  - {name: A, version: V1}\n", draft=True)
+        v = vlist.loads(b"description: 2026-12-01\nproducts:\n  - {name: A, version: V1}\n", draft=True)
         self.assertEqual(v.description, "2026-12-01")
 
     def test_draft_rejects_tool_fields(self):
         with self.assertRaises(FormatError):
-            vlist.loads(DRAFT + b"bundle: " + H3.encode() + b"\n", draft=True)
-        bad = DRAFT.replace(b"{name: PYTHON, version: V3.11.14}",
-                            b"{name: PYTHON, version: V3.11.14, manifest: " + H1.encode() + b"}")
-        with self.assertRaises(FormatError):
-            vlist.loads(bad, draft=True)
+            vlist.loads(DRAFT + b"released: \"2026-12-01T10:00:00+09:00\"\n", draft=True)
 
     def test_errors(self):
         cases = {
@@ -63,11 +49,9 @@ class TestDraft(unittest.TestCase):
             "duplicate product": DRAFT + b"  - {name: ROOT, version: V6.36.06_3.11.14}\n",
             "bad product name": DRAFT.replace(b"name: ROOT", b"name: root"),
             "bad version": DRAFT.replace(b"version: V3.11.14", b"version: 3.11.14"),
-            "empty products": b"format: 1\ndescription: x\nproducts: []\n",
-            "no format": DRAFT.replace(b"format: 1\n", b""),
-            "bad format": DRAFT.replace(b"format: 1", b"format: one"),
-            "newline in description": b'format: 1\ndescription: "a\\nb"\nproducts:\n  - {name: A, version: V1}\n',
-            "yaml syntax": b"format: 1\ndescription: [\n",
+            "empty products": b"description: x\nproducts: []\n",
+            "newline in description": b'description: "a\\nb"\nproducts:\n  - {name: A, version: V1}\n',
+            "yaml syntax": b"description: [\n",
             "not a mapping": b"- a\n- b\n",
         }
         for label, data in cases.items():
@@ -75,13 +59,8 @@ class TestDraft(unittest.TestCase):
                 with self.assertRaises(FormatError):
                     vlist.loads(data, draft=True)
 
-    def test_format_too_new(self):
-        with self.assertRaises(FormatTooNew) as cm:
-            vlist.loads(DRAFT.replace(b"format: 1", b"format: 2") + b"newfield: x\n", draft=True)
-        self.assertEqual(cm.exception.exit_code, 5)
-
     def test_korean_description(self):
-        v = vlist.loads("format: 1\ndescription: 한글 설명\nproducts:\n  - {name: A, version: V1}\n".encode(),
+        v = vlist.loads("description: 한글 설명\nproducts:\n  - {name: A, version: V1}\n".encode(),
                         draft=True)
         self.assertEqual(v.description, "한글 설명")
 
@@ -90,35 +69,21 @@ class TestReleased(unittest.TestCase):
     def test_roundtrip_and_determinism(self):
         data = vlist.dumps(released())
         self.assertEqual(data, vlist.dumps(vlist.loads(data)))
-        self.assertEqual(vlist.vlist_hash(data), vlist.vlist_hash(vlist.dumps(released())))
-        self.assertTrue(data.startswith(b'format: "1"\ndescription: '))
+        self.assertEqual(data, vlist.dumps(released()))
+        self.assertTrue(data.startswith(b'description: '))
         v = vlist.loads(data)
-        self.assertEqual(v.products[1].module, "ROOT/V6.32.20_3.11.14-m2")
-        self.assertEqual(v.bundle, H3)
-
-    def test_migrated_from(self):
-        data = vlist.dumps(released(migrated_from="3.1.vlist"))
-        self.assertEqual(vlist.loads(data, name="3.1").migrated_from, "3.1.vlist")
-        with self.assertRaises(FormatError):
-            vlist.loads(data, name="3.0")
+        self.assertEqual(v.products[1].module, "ROOT/V6.32.20_3.11.14")
 
     def test_released_requires_tool_fields(self):
         with self.assertRaises(FormatError):
             vlist.loads(DRAFT)  # not a draft, but released etc. are missing
 
-    def test_module_names(self):
-        ok = ["ROOT/V1", "ROOT/V1-m2", "ROOT/V1-m10"]
-        bad = ["ROOT/V1-m1", "ROOT/V1-m0", "ROOT/V1-m02", "ROOT/V2", "PYTHON/V1", "ROOT/V1-x2", "ROOT/V1/x"]
-        for m in ok:
-            self.assertTrue(vlist.module_name_ok(m, "ROOT", "V1"), m)
-        for m in bad:
-            self.assertFalse(vlist.module_name_ok(m, "ROOT", "V1"), m)
+    def test_released_rejects_old_fields(self):
+        data = vlist.dumps(released()).replace(b"products:", b'bundle: "x"\nproducts:')
         with self.assertRaises(FormatError):
-            vlist.dumps(released(products=[vlist.Product("ROOT", "V1", H1, "ROOT/V2", H2)]))
+            vlist.loads(data)
 
-    def test_bad_hash_and_time(self):
-        with self.assertRaises(FormatError):
-            vlist.dumps(released(bundle="sha256:abc"))
+    def test_bad_time(self):
         with self.assertRaises(FormatError):
             vlist.dumps(released(released="2026-12-01 10:00:00"))
 
@@ -126,8 +91,8 @@ class TestReleased(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "3.1.yml")
             with open(path, "wb") as f:
-                f.write(vlist.dumps(released(migrated_from="3.1.vlist")))
-            self.assertEqual(vlist.load(path).migrated_from, "3.1.vlist")
+                f.write(vlist.dumps(released()))
+            self.assertEqual(vlist.load(path).released_by, "prodman v0.1 on cupdev0")
             self.assertEqual(vlist.name_from_path(path), "3.1")
 
 
@@ -144,23 +109,6 @@ class TestNames(unittest.TestCase):
         self.assertEqual(vlist.name_from_path("/x/vlist/daq_2.1.yml"), "daq_2.1")
         with self.assertRaises(FormatError):
             vlist.name_from_path("/x/vlist/3.1.vlist")
-
-
-class TestLegacy(unittest.TestCase):
-    def test_server_style(self):
-        text = "#\n# Products \n#\nPYTHON\t\tV3.11.14\nROOT\t\tV6.32.20_3.11.14\nHDF5\t\tV1.14.2\n#GEANT4          V11.1.3\n"
-        self.assertEqual(vlist.parse_legacy(text),
-                         [("PYTHON", "V3.11.14"), ("ROOT", "V6.32.20_3.11.14"), ("HDF5", "V1.14.2")])
-
-    def test_mixed_whitespace(self):
-        self.assertEqual(vlist.parse_legacy("GEANT4          V11.1.3\n  CAENHVWRAPPER\tV6.6  \n"),
-                         [("GEANT4", "V11.1.3"), ("CAENHVWRAPPER", "V6.6")])
-
-    def test_errors(self):
-        for text in ["ROOT\n", "ROOT V1 extra\n", "root V1\n", "ROOT V1\nROOT V2\n", "# only comments\n"]:
-            with self.subTest(text):
-                with self.assertRaises(FormatError):
-                    vlist.parse_legacy(text)
 
 
 if __name__ == "__main__":

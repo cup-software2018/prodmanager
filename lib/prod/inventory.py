@@ -1,8 +1,8 @@
-"""`prod list`, `prod remove`, `prod gc` (on clients and on the server).
+"""`prodman list`, `prodman remove`, `prodman gc` (on clients and on the server).
 
-What prod manages under Products: `.prod/`, `vlist/<name>.yml|.withdrawn`, `vlist/drafts/` (server),
-`modulefiles/`, and per product `<VER>/`, `<VER>.manifest`, `<VER>.buildinfo`, `<VER>.recipe.yml` for versions
-that have a manifest. Everything else is "unmanaged" and is never deleted by prod. A product-named directory with
+What prod manages under Products: `.prod/`, `packages/`, `vlist/<name>.yml`, `vlist/drafts/` (server),
+`modulefiles/`, and per product `<VER>/`, `<VER>.manifest`, `<VER>.recipe.yml` for versions that have a
+manifest. Everything else is "unmanaged" and is never deleted by prod. A product-named directory with
 no version-like entry (V...) in it is listed as one entry, "<DIR>/", instead of entry by entry.
 """
 
@@ -13,7 +13,7 @@ from typing import Dict, List, Optional
 from . import fsutil, manifest, state, transfer
 from . import vlist as vlist_mod
 from .errors import CheckFailed, FormatError
-from .verify import frozen_versions, installed_vlists, read_withdrawn
+from .verify import frozen_versions, installed_vlists
 
 
 def _local_vlists(paths):
@@ -44,11 +44,11 @@ def unmanaged(paths):
     frozen = set(frozen_versions(paths))
     for top in sorted(os.listdir(paths.products)):
         full = os.path.join(paths.products, top)
-        if top in (".prod", "modulefiles"):
+        if top in (".prod", "modulefiles", "packages"):
             continue
         if top == "vlist":
             for n in sorted(os.listdir(full)):
-                if not (n.endswith(vlist_mod.SUFFIX) or n.endswith(".withdrawn") or n == "drafts"):
+                if not (n.endswith(vlist_mod.SUFFIX) or n == "drafts"):
                     found.append(f"vlist/{n}")
             continue
         if not (os.path.isdir(full) and not os.path.islink(full) and vlist_mod.PRODUCT_RE.match(top)):
@@ -60,7 +60,7 @@ def unmanaged(paths):
                 leftovers.append(f"{top}/{n}")
                 continue
             base = n
-            for suffix in (manifest.SUFFIX, ".buildinfo", ".recipe.yml"):
+            for suffix in (manifest.SUFFIX, ".recipe.yml"):
                 if n.endswith(suffix):
                     base = n[: -len(suffix)]
             versionish = versionish or bool(vlist_mod.VERSION_RE.match(base))
@@ -74,6 +74,22 @@ def unmanaged(paths):
     return found, leftovers
 
 
+def not_released(paths):
+    """[(name, version)] of version directories that have no manifest: built (staging), not released yet."""
+    frozen = set(frozen_versions(paths))
+    result = []
+    for top in sorted(os.listdir(paths.products)):
+        full = os.path.join(paths.products, top)
+        if not (vlist_mod.PRODUCT_RE.match(top) and os.path.isdir(full) and not os.path.islink(full)):
+            continue
+        for n in sorted(os.listdir(full)):
+            p = os.path.join(full, n)
+            if (vlist_mod.VERSION_RE.match(n) and os.path.isdir(p) and not os.path.islink(p)
+                    and (top, n) not in frozen):
+                result.append((top, n))
+    return result
+
+
 @dataclass
 class Listing:
     tool: str
@@ -81,9 +97,8 @@ class Listing:
     server: Optional[str]
     vlists: List[dict] = field(default_factory=list)
     versions: List[dict] = field(default_factory=list)
-    unmanaged: List[str] = field(default_factory=list)
+    not_released: List[dict] = field(default_factory=list)
     leftovers: List[str] = field(default_factory=list)
-    packages: Optional[str] = None
     remote: Optional[List[dict]] = None
 
     def as_dict(self):
@@ -96,18 +111,11 @@ def listing(paths, cfg, *, tool, remote=False):
     history = state.read_history(paths)
     lst = Listing(tool=tool, role=cfg.role, server=cfg.server.spec if cfg.server else None)
     for name in installed_vlists(paths):
-        with open(paths.vlist_file(name), "rb") as f:
-            h = vlist_mod.vlist_hash(f.read())
-        trusted = state.get_trusted(paths, name) if cfg.role == "client" else None
         events = [e for e in history if e.get("vlist") == name or name in e.get("vlists", [])]
         syncs = [e for e in events if e.get("command") == "sync" and e.get("result") == "ok"]
         verifies = [e for e in events if e.get("command") == "verify"]
-        withdrawn = read_withdrawn(paths.withdrawn_file(name))
         lst.vlists.append({
             "name": name,
-            "hash": h,
-            "trusted": None if cfg.role != "client" else (trusted == h),
-            "withdrawn": withdrawn,
             "description": vlists[name].description if name in vlists else "(unreadable)",
             "first_sync": syncs[0]["time"] if syncs else None,
             "last_sync": syncs[-1]["time"] if syncs else None,
@@ -115,51 +123,66 @@ def listing(paths, cfg, *, tool, remote=False):
         })
     for name, version in frozen_versions(paths):
         lst.versions.append({"name": name, "version": version, "used_by": sorted(users.get((name, version), []))})
-    lst.unmanaged, lst.leftovers = unmanaged(paths)
-    if os.path.exists(paths.packages_record):
-        lst.packages = paths.packages_record
+    lst.not_released = [{"name": n, "version": v} for n, v in not_released(paths)]
+    _, lst.leftovers = unmanaged(paths)
     if remote and cfg.server is not None:
         names = transfer.list_dir(cfg, "vlist")
-        lst.remote = [{"name": n[: -len(vlist_mod.SUFFIX)],
-                       "withdrawn": n[: -len(vlist_mod.SUFFIX)] + ".withdrawn" in names}
-                      for n in names if n.endswith(vlist_mod.SUFFIX)]
+        lst.remote = [{"name": n[: -len(vlist_mod.SUFFIX)]} for n in names if n.endswith(vlist_mod.SUFFIX)]
     return lst
 
 
 def _vlist_files(paths, name):
-    return [p for p in (paths.vlist_file(name), paths.withdrawn_file(name), paths.bundle_file(name))
+    return [p for p in (paths.vlist_file(name), paths.bundle_file(name)) if os.path.lexists(p)]
+
+
+def _version_files(paths, name, version):
+    return [p for p in (paths.version_dir(name, version), paths.manifest_file(name, version),
+                        paths.recipe_file(name, version), paths.module_file(f"{name}/{version}"))
             if os.path.lexists(p)]
 
 
-def remove(paths, cfg, names, *, tool, yes=False):
-    """Take vlists off this node and return the files that were (or, on the server without yes, would be)
-    deleted. Versions stay; `prod gc` deletes those no other vlist uses.
+def _parse_target(target):
+    """'1.0' -> ('1.0', None); 'ROOT/V6.32.24_3.11.14' -> ('ROOT', 'V6.32.24_3.11.14')."""
+    if "/" not in target:
+        return vlist_mod.check_name(target), None
+    name, _, version = target.partition("/")
+    if not vlist_mod.PRODUCT_RE.match(name) or not vlist_mod.VERSION_RE.match(version):
+        raise FormatError(f"'{target}' is not a vlist name or <NAME>/<VERSION>")
+    return name, version
 
-    client: removes the vlists at once. The trusted records stay, so a later sync is still checked against
-            the first one.
-    server: deletes the releases, only with yes. The name can then be released again, so do this only for a
-            vlist no node has synced (a node that has would stop with "the server's vlist differs").
-            Refused for a vlist that another withdrawn vlist names as its replacement.
+
+def remove(paths, cfg, targets, *, tool, yes=False):
+    """Delete vlists (`1.0`) and product versions (`ROOT/V6.32.24_3.11.14`) from this node, only with yes.
+    Returns the files that were (or, without yes, would be) deleted.
+
+    vlist:   the vlist file and its bundle modulefile. The versions stay (prodman gc deletes those no vlist uses).
+             On the server the draft stays.
+    version: the version directory, its manifest, saved recipe and modulefile. Refused while a vlist that is
+             not removed in the same command uses it.
     """
-    server = cfg.role == "server"
     with state.lock(paths, exclusive=True):
-        for name in names:
-            vlist_mod.check_name(name)
-            if not os.path.exists(paths.vlist_file(name)):
-                raise FormatError(f"vlist '{name}' is not {'released' if server else 'on this node'}")
-        if server:
-            for other in installed_vlists(paths):
-                rec = read_withdrawn(paths.withdrawn_file(other))
-                if other not in names and rec and rec["replaced_by"] in names:
-                    raise CheckFailed(f"vlist '{other}' was withdrawn in favour of '{rec['replaced_by']}'; "
-                                      f"remove '{other}' too, or keep '{rec['replaced_by']}'")
-        files = [p for name in names for p in _vlist_files(paths, name)]
-        if server and not yes:
-            return files
-        for name in names:
-            for path in _vlist_files(paths, name):
-                os.unlink(path)  # a locked file goes: only its directory must be writable
-            state.record(paths, tool, "remove", vlist=name, result="ok")
+        parsed = [(t, *_parse_target(t)) for t in targets]
+        vlist_names = {name for _, name, version in parsed if version is None}
+        users, _ = _users(_local_vlists(paths))
+        files = []
+        for target, name, version in parsed:
+            if version is None:
+                if not os.path.exists(paths.vlist_file(name)):
+                    raise FormatError(f"vlist '{name}' is not on this node")
+                files += _vlist_files(paths, name)
+                continue
+            found = _version_files(paths, name, version)
+            if not found:
+                raise FormatError(f"{target} is not on this node")
+            used = [v for v in users.get((name, version), []) if v not in vlist_names]
+            if used:
+                raise CheckFailed(f"{target} is used by vlist {', '.join(used)}; remove the vlist first")
+            files += found
+        if yes:
+            with fsutil.opened(paths.modulefiles):  # the modulefiles are in it
+                for path in files:
+                    fsutil.remove_tree(path)
+            state.record(paths, tool, "remove", targets=list(targets), result="ok")
         return files
 
 
@@ -172,7 +195,7 @@ def gc_candidates(paths):
     for name, version in frozen_versions(paths):
         if (name, version) not in users:
             for path in (paths.version_dir(name, version), paths.manifest_file(name, version),
-                         paths.buildinfo_file(name, version), paths.recipe_file(name, version)):
+                         paths.recipe_file(name, version)):
                 if os.path.lexists(path):
                     out.append(path)
     if os.path.isdir(paths.modulefiles):
@@ -193,12 +216,13 @@ def gc_candidates(paths):
 
 def gc(paths, cfg, *, tool, yes=False):
     """Delete what gc_candidates lists (only with yes). On the server this deletes released versions that no
-    vlist uses any more, after `prod remove`; staging versions (no manifest) are never touched."""
+    vlist uses any more, after `prodman remove`; staging versions (no manifest) are never touched."""
     with state.lock(paths, exclusive=True):
         candidates = gc_candidates(paths)
         if yes:
-            for path in candidates:
-                fsutil.remove_tree(path)
+            with fsutil.opened(paths.modulefiles):
+                for path in candidates:
+                    fsutil.remove_tree(path)
             state.record(paths, tool, "gc", result="ok", removed=[os.path.relpath(p, paths.products)
                                                                    for p in candidates])
         return candidates

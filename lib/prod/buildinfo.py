@@ -1,7 +1,8 @@
-"""buildinfo: a human-readable build record next to each version.
+"""buildinfo: a human-readable record of what was built, kept in the saved recipe.
 
-What to extract is defined per product by `recipes/<NAME>/buildinfo.sh <version dir>`, which prints
-`key<TAB>value` lines. The tool does not verify buildinfo; it is a record, not a reference.
+What to extract is defined per product by `build-recipes/<NAME>/buildinfo.sh <version dir>`, which prints
+`key<TAB>value` lines. save-recipe.py runs it when build.sh has built the version and writes the lines into
+`<VERSION>.recipe.yml` as `buildinfo`. The tool does not verify it; it is a record, not a reference.
 """
 
 import os
@@ -9,21 +10,6 @@ import subprocess
 
 from .errors import FormatError
 from .yamlutil import BAD_CHARS_RE, quote
-
-FORMAT = 1
-SUFFIX = ".buildinfo"
-
-
-def os_name():
-    try:
-        with open("/etc/os-release", encoding="utf-8") as f:
-            for line in f:
-                if line.startswith("PRETTY_NAME="):
-                    return line.split("=", 1)[1].strip().strip('"')
-    except OSError:
-        pass
-    return "unknown OS"
-
 
 def extract(script, prefix, timeout=600):
     """Run buildinfo.sh with the version directory and parse its `key<TAB>value` lines."""
@@ -45,21 +31,17 @@ def extract(script, prefix, timeout=600):
     return info
 
 
-def dumps(product, version, source, recipe, collected, info):
-    lines = [
-        f"format: {quote(str(FORMAT))}",
-        f"product: {quote(product)}",
-        f"version: {quote(version)}",
-        f"source: {quote(source)}",
-        f"recipe: {quote(recipe)}",
-        f"collected: {quote(collected)}",
-    ]
-    if info:
-        lines.append("info:")
-        lines += [f"  {quote(k)}: {quote(v)}" for k, v in info]
-    else:
-        lines.append("info: {}")
-    return ("\n".join(lines) + "\n").encode("utf-8")
+def yaml_block(info):
+    """The `buildinfo:` mapping for the saved recipe. A key printed twice gets ' (2)', ' (3)', ..."""
+    if not info:
+        return "buildinfo: {}\n"
+    seen = {}
+    lines = ["buildinfo:"]
+    for k, v in info:
+        seen[k] = seen.get(k, 0) + 1
+        key = k if seen[k] == 1 else f"{k} ({seen[k]})"
+        lines.append(f"  {quote(key)}: {quote(v)}")
+    return "\n".join(lines) + "\n"
 
 
 def script_path(recipes_root, product):
