@@ -11,9 +11,11 @@ release works in two phases:
 A product's modulefile is `<NAME>/<VERSION>`. It is made at the first release of that version and is used as it
 is by every later release: released files never change.
 
-A draft names a version as people think of it, e.g. CUPDATAMODEL V1.4. The version released is the one built
-version among V1.4 and V1.4.<x> whose recipe's depends are all earlier in the vlist (resolve_versions), so
-V1.4.1 (built with ROOT 6.32) and V1.4.2 (built with ROOT 6.40) are both written V1.4 in drafts.
+A draft lists products in any order: release orders them by their recipes' depends (dependencies first; products
+with no dependency relation in the vlist last; the draft's order otherwise). A draft names a version as people think of it, e.g. CUPDATAMODEL V1.4. The version
+released is the one built version among V1.4 and V1.4.<x> whose recipe's depends are all in the vlist
+(resolve_versions), so V1.4.1 (built with ROOT 6.32) and V1.4.2 (built with ROOT 6.40) are both written V1.4 in
+drafts.
 """
 
 import os
@@ -70,37 +72,55 @@ def _candidates(paths, name, version):
     return sorted(found, key=lambda e: [int(x) if x.isdigit() else x for x in re.split(r"(\d+)", e)])
 
 
+def _depends(paths, recipes_root, name, version):
+    try:
+        return recipe.find(paths.products, recipes_root, name, version).depends
+    except FormatError:
+        return None  # reported by the checks of plan()
+
+
 def resolve_versions(paths, recipes_root, products):
-    """[Product] of a draft -> ([Product] with the built versions to release, [problem]).
+    """[Product] of a draft -> ([Product] with the built versions to release, in load order; [problem]).
 
     Each draft version is matched against the built versions <version> and <version>.<x> (_candidates); the one
-    whose recipe's depends are all earlier in the (resolved) list is taken. With one candidate it is taken as is,
-    so the usual checks report what is wrong with it."""
-    resolved, problems = [], []
-    for p in products:
-        cands = _candidates(paths, p.name, p.version)
-        earlier = {(q.name, q.version) for q in resolved}
-        fits = []
-        for c in cands:
-            try:
-                deps = recipe.find(paths.products, recipes_root, p.name, c).depends
-            except FormatError:
-                continue
-            if all(d in earlier for d in deps):
-                fits.append(c)
-        if len(fits) == 1:
-            chosen = fits[0]
-        elif len(cands) <= 1:
-            chosen = cands[0] if cands else p.version
-        elif not fits:
-            chosen = p.version
-            problems.append(f"{p.name} {p.version}: none of the built versions {', '.join(cands)} has all its "
-                            f"depends earlier in this vlist")
+    whose recipe's depends are all among the products already placed is taken. Placing is repeated, the first
+    product of the draft that can be placed first, so dependencies come before the products that need them and
+    the draft's order is kept otherwise. Then the products with no dependency relation in the vlist (they need
+    none and none needs them) move to the end. What cannot be placed goes last, in the draft's order: with one
+    candidate (or none) as it is, so the usual checks report what is wrong with it."""
+    cands = {p.name: _candidates(paths, p.name, p.version) for p in products}
+    deps = {(p.name, c): _depends(paths, recipes_root, p.name, c) for p in products for c in cands[p.name]}
+    placed, waiting = [], list(products)
+
+    def fits(p):
+        done = {(q.name, q.version) for q in placed}
+        return [c for c in cands[p.name]
+                if deps[(p.name, c)] is not None and all(d in done for d in deps[(p.name, c)])]
+
+    while True:
+        ready = next((p for p in waiting if len(fits(p)) == 1), None)
+        if ready is None:
+            break
+        placed.append(vlist_mod.Product(ready.name, fits(ready)[0]))
+        waiting.remove(ready)
+
+    needed = {d for q in placed for d in deps[(q.name, q.version)]}
+    alone = [q for q in placed if not deps[(q.name, q.version)] and (q.name, q.version) not in needed]
+    placed = [q for q in placed if q not in alone] + alone
+
+    problems = []
+    for p in waiting:
+        found, ok = cands[p.name], fits(p)
+        if len(found) <= 1:
+            placed.append(vlist_mod.Product(p.name, found[0] if found else p.version))
+            continue
+        placed.append(vlist_mod.Product(p.name, p.version))
+        if ok:
+            problems.append(f"{p.name} {p.version}: more than one built version fits this vlist: {', '.join(ok)}")
         else:
-            chosen = p.version
-            problems.append(f"{p.name} {p.version}: more than one built version fits this vlist: {', '.join(fits)}")
-        resolved.append(vlist_mod.Product(p.name, chosen))
-    return resolved, problems
+            problems.append(f"{p.name} {p.version}: none of the built versions {', '.join(found)} has all its "
+                            f"depends in this vlist")
+    return placed, problems
 
 
 def modulefile_sources(tool_root):
@@ -162,11 +182,11 @@ def plan(paths, cfg, name, *, tool_root, tool, now=None, host=None, check_enviro
     draft = _read_draft(paths, name)
     src_root = modulefile_sources(tool_root)
     recipes_root = None  # only the recipes saved next to the versions (build.sh, save-recipe.py) are used
-    asked = [(p.name, p.version) for p in draft.products]
+    asked = {p.name: p.version for p in draft.products}
     draft.products, problems = resolve_versions(paths, recipes_root, draft.products)
-    for (pname, pver), p in zip(asked, draft.products):
-        if p.version != pver:
-            progress.line(f"  {pname} {pver} -> {p.version}")
+    for p in draft.products:
+        if p.version != asked[p.name]:
+            progress.line(f"  {p.name} {asked[p.name]} -> {p.version}")
     if problems:
         raise CheckFailed(f"cannot release '{name}':\n" + "\n".join(f"  - {x}" for x in problems))
 
@@ -229,7 +249,7 @@ def plan(paths, cfg, name, *, tool_root, tool, now=None, host=None, check_enviro
             except FormatError as e:
                 problems.append(f"{p.name} {p.version}: {e}")
 
-    # dependencies must be in this vlist, with the same version, earlier in the list
+    # dependencies must be in this vlist, with the same version (resolve_versions put them earlier)
     for i, p in enumerate(draft.products):
         try:
             rec = recipe.find(paths.products, recipes_root, p.name, p.version)

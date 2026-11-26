@@ -133,11 +133,11 @@ class TestRelease(FakeServer):
         with open(self.w(self.tool_root, "modulefiles", "CUPDAQ", "template.tcl"), "w") as f:
             f.write(template("CUPDAQ", "CUPDAQ_DIR"))
         self.saved_recipe("CUPDAQ", "V4.3.2", deps=[("HDF5", "V1.14.2")])
-        self.draft("daq_3.0", [("CUPDAQ", "V4.3.2"), ("HDF5", "V1.14.2")])
-        with self.assertRaisesRegex(CheckFailed, "needs HDF5 V1.14.2, which must come before it"):
+        self.draft("daq_3.0", [("CUPDAQ", "V4.3.2")])
+        with self.assertRaisesRegex(CheckFailed, "needs HDF5 V1.14.2, which is not in this vlist"):
             self.release("daq_3.0", check=True)  # the saved recipe's depends are checked
-        self.draft("daq_3.0", [("HDF5", "V1.14.2"), ("CUPDAQ", "V4.3.2")])
-        rp = self.release("daq_3.0")
+        self.draft("daq_3.0", [("CUPDAQ", "V4.3.2"), ("HDF5", "V1.14.2")])
+        rp = self.release("daq_3.0")  # the saved recipe's depends put HDF5 first
         built = "build-recipes/CUPDAQ/V4.3.2.yml at commit 0123456789ab on cupdev0 at T"
         self.assertEqual(rp.products[1].notes, [f"recipe CUPDAQ/V4.3.2.recipe.yml ({built})"])
         self.assertEqual(rp.products[0].notes, ["recipe HDF5/V1.14.2.recipe.yml"])
@@ -149,7 +149,7 @@ class TestRelease(FakeServer):
         self.assertFalse(self.writable(p.recipe_file("CUPDAQ", "V4.3.2")))
 
     def test_draft_version_picks_the_build_that_fits(self):
-        # V1.4 in a draft means V1.4 or V1.4.<x>: the one whose depends are earlier in the vlist
+        # V1.4 in a draft means V1.4 or V1.4.<x>: the one whose depends are in the vlist
         with open(self.w(self.tool_root, "modulefiles", "CUPDATAMODEL", "template.tcl"), "w") as f:
             f.write(template("CUPDATAMODEL", "CUPDM_DIR"))
         self.version("HDF5", "V2.2.0", {"lib/libhdf5.so": b"h5 2"})
@@ -161,12 +161,13 @@ class TestRelease(FakeServer):
         rp = self.release("dm_a")
         self.assertEqual([(x.name, x.version) for x in rp.vlist.products],
                          [("HDF5", "V1.14.2"), ("CUPDATAMODEL", "V1.4.1")])  # never V1.40
-        self.draft("dm_b", [("HDF5", "V2.2.0"), ("CUPDATAMODEL", "V1.4")])
+        self.draft("dm_b", [("CUPDATAMODEL", "V1.4"), ("HDF5", "V2.2.0")])  # any order
         rp = self.release("dm_b", check=True)
-        self.assertEqual(rp.vlist.products[1].version, "V1.4.2")
+        self.assertEqual([(x.name, x.version) for x in rp.vlist.products],
+                         [("HDF5", "V2.2.0"), ("CUPDATAMODEL", "V1.4.2")])
         # none fits, more than one fits
         self.draft("dm_c", [("CUPDATAMODEL", "V1.4")])
-        with self.assertRaisesRegex(CheckFailed, "none of the built versions V1.4.1, V1.4.2 has all its depends"):
+        with self.assertRaisesRegex(CheckFailed, "none of the built versions V1.4.1, V1.4.2 has all its depends in"):
             self.release("dm_c", check=True)
         self.version("CUPDATAMODEL", "V1.4.3", {"lib/libRawObjs.so": b"3"})
         self.saved_recipe("CUPDATAMODEL", "V1.4.3", deps=[("HDF5", "V1.14.2")])
@@ -228,9 +229,16 @@ class TestRelease(FakeServer):
         self.draft("x", [("ROOT", "V6.32.20_3.11.14")])
         with self.assertRaisesRegex(CheckFailed, "needs PYTHON V3.11.14, which is not in this vlist"):
             self.release("x")
-        self.draft("x", [("ROOT", "V6.32.20_3.11.14"), ("PYTHON", "V3.11.14")])
-        with self.assertRaisesRegex(CheckFailed, "must come before it"):
-            self.release("x")
+
+    def test_draft_order_does_not_matter(self):
+        # dependencies first, products with no dependency relation (HDF5 here) last
+        self.draft("x", [("HDF5", "V1.14.2"), ("ROOT", "V6.32.20_3.11.14"), ("PYTHON", "V3.11.14")])
+        self.release("x")
+        v = vlist_mod.load(self.paths.vlist_file("x"))
+        self.assertEqual([p.name for p in v.products], ["PYTHON", "ROOT", "HDF5"])
+        with open(self.paths.bundle_file("x")) as f:
+            bundle = f.read()
+        self.assertLess(bundle.index("module load PYTHON/"), bundle.index("module load ROOT/"))
 
     def snapshot(self):
         """Every path and mode under Products, except .prod/state (the lock file lives there)."""

@@ -216,10 +216,6 @@ echo "PATH=$PATH"
         self.assertIn(f"{self.sp}/HDF5/V1.14.2/bin", entries)
 
     def test_errors_return_nonzero(self):
-        r = self.bash(f". {self.setup}; echo rc=$?")
-        self.assertIn("rc=1", r.stdout)
-        self.assertIn("usage:", r.stderr)  # not on a terminal: no question
-        self.assertIn("  1) 3.0", r.stderr)
         r = self.bash(f". {self.setup} 9.9; echo rc=$?")
         self.assertIn("rc=1", r.stdout)
         self.assertIn("run 'prodman sync 9.9'", r.stderr)
@@ -227,19 +223,24 @@ echo "PATH=$PATH"
         self.assertNotEqual(r.returncode, 0)
         self.assertNotIn("not reached", r.stdout)
 
-    @unittest.skipUnless(shutil.which("script"), "needs script(1) for a terminal")
-    def test_choose_a_release_on_a_terminal(self):
-        def on_terminal(answer):
-            cmd = f"bash --noprofile --norc -i -c '. {self.setup}; echo rc=$? VLIST=${{PROD_VLIST:-none}}'"
-            return subprocess.run(["script", "-qec", cmd, "/dev/null"], input=answer, capture_output=True,
-                                  text=True, env=self.env(), timeout=60).stdout
-        out = on_terminal("2\n")
-        self.assertIn("1) 3.0", out)
-        self.assertIn("choose a release", out)
-        self.assertIn("rc=0 VLIST=3.1", out)
-        self.assertIn("rc=0 VLIST=3.0", on_terminal("3.0\n"))  # by name
-        self.assertIn("rc=0 VLIST=none", on_terminal("\n"))     # Enter: nothing loaded
-        self.assertIn("rc=1 VLIST=none", on_terminal("9\n"))    # no such release
+    def test_without_vlist_only_module_is_set_up(self):
+        script = f"""set -eu
+. {self.setup}
+echo "rc=$? VLIST=${{PROD_VLIST:-none}}"
+MODULES_VERBOSITY=concise module load ROOT/V6.32.20_3.11.14
+echo "ROOTSYS=$ROOTSYS"
+"""
+        r = self.bash(script)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stderr, "")  # quiet when not interactive
+        self.assertIn("rc=0 VLIST=none", r.stdout)
+        self.assertIn(f"ROOTSYS={self.sp}/ROOT/V6.32.20_3.11.14", r.stdout)
+        r = subprocess.run(["bash", "--noprofile", "--norc", "-i", "-c", f". {self.setup}; echo rc=$?"],
+                           env=self.env(), capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        self.assertIn("rc=0", r.stdout)
+        self.assertIn("releases on this node:", r.stderr)
+        self.assertIn("  3.0          PYTHON/V3.11.14 ROOT/V6.32.20_3.11.14", r.stderr)
+        self.assertIn("module load <NAME>/<VERSION>", r.stderr)
 
     def test_interactive_summary(self):
         r = subprocess.run(["bash", "--noprofile", "--norc", "-i", "-c", f". {self.setup} 3.0"],

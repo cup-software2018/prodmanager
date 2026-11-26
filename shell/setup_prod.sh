@@ -2,8 +2,10 @@
 #
 #     . ~/setup_prod.sh <vlist>
 #
-# Without <vlist> it lists the releases on this node; in an interactive shell on a terminal it then asks which one
-# to load (Enter: none).
+#     . ~/setup_prod.sh            # only set up `module`: then `module load <NAME>/<VERSION>`
+#
+# Without <vlist> it only makes the modulefiles of this node available to `module` (module use), loads nothing,
+# and in an interactive shell lists the releases on this node.
 #
 # It loads the vlist bundle modulefile `vlist/<vlist>` with environment-modules, which loads every
 # product of the vlist in order. Loading another vlist replaces the previous one (module switch).
@@ -34,38 +36,29 @@ _prod_setup() {
         esac
 
         if [ -z "$name" ]; then
-            local f n desc choice i=0
-            local -a names=()
-            for f in "$products"/vlist/*.yml; do
-                [ -e "$f" ] || continue
-                n="${f##*/}"
-                names+=("${n%.yml}")
-            done
-            if [ "${#names[@]}" -eq 0 ]; then
-                echo "prod: no releases on this node; install one with 'prodman sync <vlist>'" >&2
-                rc=1
-            else
-                echo "releases on this node:" >&2
-                for n in "${names[@]}"; do
-                    i=$((i + 1))
-                    desc="$(sed -n 's/^description: "\(.*\)"$/\1/p' "$products/vlist/$n.yml")"
-                    printf '  %d) %-12s %s\n' "$i" "$n" "$desc" >&2
-                done
-                case "$-" in *i*) [ -t 0 ] && choice="?" ;; esac
-                if [ "$choice" = "?" ]; then
-                    read -r -p "choose a release (number or name, Enter: none): " choice
-                    if [ -z "$choice" ]; then
-                        skip=1
-                    elif [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#names[@]}" ]; then
-                        name="${names[$((choice - 1))]}"
+            skip=1 # module use only
+            case "$-" in
+                *i*)
+                    local f n mods found=0
+                    for f in "$products"/vlist/*.yml; do
+                        [ -e "$f" ] || continue
+                        [ "$found" -eq 1 ] || echo "releases on this node:" >&2
+                        found=1
+                        n="${f##*/}"
+                        n="${n%.yml}"
+                        mods="$(sed -n 's/^module load //p' "$products/modulefiles/vlist/$n" 2>/dev/null | tr '\n' ' ')"
+                        printf '  %-12s %s\n' "$n" "${mods% }" >&2
+                    done
+                    if [ "$found" -eq 0 ]; then
+                        echo "prod: no releases on this node; install one with 'prodman sync <vlist>'" >&2
                     else
-                        name="$choice"
+                        echo "usage:" >&2
+                        echo "  . ~/setup_prod.sh <vlist>       load a release" >&2
+                        echo "  module load <NAME>/<VERSION>    load one product" >&2
+                        echo "  module avail                    list the products" >&2
                     fi
-                else
-                    echo "usage: . ~/setup_prod.sh <vlist>" >&2
-                    rc=1
-                fi
-            fi
+                    ;;
+            esac
         fi
         if [ "$rc" -eq 0 ] && [ "$skip" -eq 0 ] && [ ! -f "$products/vlist/$name.yml" ]; then
             if [ -f "$HOME/.prod-local/vlist/$name.yml" ]; then

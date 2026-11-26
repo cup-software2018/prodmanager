@@ -114,6 +114,7 @@ build() {
     with_progress make "$WORKDIR/make.log" make -j"$JOBS" || die "make failed, see $WORKDIR/make.log"
     log "make install (log: $WORKDIR/install.log)"
     with_progress "make install" "$WORKDIR/install.log" make install || die "make install failed, see $WORKDIR/install.log"
+    ln -sfn python3 "$PREFIX/bin/python" # make install creates only python3; users expect python too
     cd "$WORKDIR"
 
     log "checking the standard modules"
