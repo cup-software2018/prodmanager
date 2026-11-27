@@ -1,89 +1,112 @@
 # prodmanager
 
-`prod` is the tool that manages CUP's products (Python, ROOT, Geant4, HDF5, CUPDAQ, ...).
-One products server builds and releases them. Every node installs **the same bytes at the same path**
-(`/home/cupsoft/Products`).
+prodmanager gives every CUP node the same software: Python, ROOT, Geant4, HDF5, CUPDAQ and more. We call
+them **products**. They are in `/home/cupsoft/Products` on every node.
 
-- **In this repository:** the tool (`prod`, `setup_prod.sh`), modulefile templates, build recipes and system package
-  lists.
-- **Not in this repository:** the product binaries, the released vlists and the manifests. They live on the products
-  server.
+This page is for **users**. If you install or release products, read the
+[admin manual](docs/manual-admin.md).
 
-## Documentation
+## Words
 
-| Document | For |
+| Word | Meaning |
 |---|---|
-| [docs/manual-client.md](docs/manual-client.md) | Users (set up the environment) and node admins (install, sync, check) |
-| [docs/manual-server.md](docs/manual-server.md) | The products server admin (build, release, withdraw, check) |
+| product | One piece of software, like ROOT |
+| version | One build of a product, like `ROOT/V6.32.24_3.11.14` |
+| release (vlist) | A named set of versions that work together, like `1.0` or `daq_1.0` |
 
-## How it works
+A release never changes. `1.0` is the same on every node, today and next year.
 
-```
- GitHub prodmanager ── git checkout <tag>; ./install.sh ──▶ /home/cupsoft/Products/.prod/   (the tool, on every node)
-
- products server (cupdev0)                                client (every node)
- /home/cupsoft/Products/                                  /home/cupsoft/Products/
-   ROOT/V6.40.04_3.14.9/ ...   ── prod sync <vlist> ──▶     same layout, only the vlists this node uses
-   vlist/4.0.yml                  (rsync + sha256 check)
-   modulefiles/                                             . ~/setup_prod.sh 4.0     ← users
-```
-
-- A **vlist** is a named set of product versions (`4.0`, `daq_2.1`). Once released it never changes: a name means
-  the same bytes on every node.
-- **Users** run `. ~/setup_prod.sh 4.0`, as before. Inside, environment-modules sets up the environment.
-- **`prod verify`** checks with sha256 that the installed files are exactly what was released.
-
-## Quick start
-
-**User**
+## 1. Load a release
 
 ```bash
-. ~/setup_prod.sh 4.0                     # other accounts: . /home/cupsoft/setup_prod.sh 4.0
+. ~/setup_prod.sh 1.0                      # as cupsoft
+. /home/cupsoft/setup_prod.sh 1.0          # as another user
+source /home/cupsoft/setup_prod.csh 1.0    # in csh or tcsh
 ```
 
-**Node admin (cupsoft)**
+This loads every product of the release. You see one line:
+
+```
+prod: vlist 1.0: PYTHON/V3.11.14 ROOT/V6.32.24_3.11.14 HDF5/V1.14.6 GEANT4/V11.1.3
+```
+
+- To change to another release, load it. The old one goes away.
+- Loading the same release again changes nothing.
+- `module list` shows what is loaded.
+
+## 2. See what is here, or load one product
+
+Run it without a release name:
 
 ```bash
-git clone https://github.com/cup-software2018/prodmanager.git && cd prodmanager && git checkout vX.Y
-./install.sh --role client --server cupsoft@192.168.0.150:/home/cupsoft/Products
-sudo /home/cupsoft/Products/.prod/current/share/postinstall.sh     # system packages, as root
-prod sync 4.0 daq_2.1
-prod verify
+. ~/setup_prod.sh
 ```
 
-**Server admin:** see [docs/manual-server.md](docs/manual-server.md).
+It loads nothing. It shows the releases on this node and how to use them:
 
-## Repository layout
+```
+releases on this node:
+  1.0          PYTHON/V3.11.14 ROOT/V6.32.24_3.11.14 HDF5/V1.14.6 GEANT4/V11.1.3
+  daq_1.0      PYTHON/V3.11.14 ROOT/V6.32.24_3.11.14 HDF5/V1.14.6 CUPDATAMODEL/V1.4 CUPDAQ/V4.4 CAENHVWRAPPER/V6.6
+usage:
+  . ~/setup_prod.sh <vlist>       load a release
+  module load <NAME>/<VERSION>    load one product
+  module avail                    list the products
+```
 
-| Path | Contents |
+After that you can use `module` to load single products:
+
+```bash
+module avail                               # list all products
+module load ROOT/V6.32.24_3.11.14          # ROOT, and the PYTHON it needs
+module unload ROOT                         # ROOT, and the PYTHON it loaded
+```
+
+You can load only one version of each product. If another PYTHON is already loaded, loading ROOT fails with
+"needs PYTHON V3.11.14, but another PYTHON is loaded". Unload the other one first.
+
+## 3. In scripts
+
+```bash
+#!/bin/bash
+set -eu
+. /home/cupsoft/setup_prod.sh 1.0          # the script stops here if this fails
+root -b -q analysis.C
+```
+
+- In a script, it prints only errors and warnings.
+- It works with `set -e` and `set -u`.
+- It works where `module` is not set up, for example in cron or over ssh.
+
+## 4. Add Python packages
+
+The products are read-only, so you cannot install into the release's Python. `pip` installs into your home
+instead:
+
+```bash
+. ~/setup_prod.sh 1.0
+pip install iminuit                        # goes to ~/.local/lib/python3.11/
+```
+
+pip says "Defaulting to user installation because normal site-packages is not writeable". That is normal. Only
+you see these packages.
+
+To keep packages apart for each project, use a venv. It still sees the release's packages (numpy, ROOT, ...):
+
+```bash
+. ~/setup_prod.sh 1.0
+python3 -m venv --system-site-packages ~/venvs/myana
+. ~/venvs/myana/bin/activate
+pip install iminuit
+```
+
+If everyone (or the DAQ) needs a package, ask the admin. It goes into a new release.
+
+## 5. Problems
+
+| You see | What to do |
 |---|---|
-| `install.sh` | Installs the tool into `<Products>/.prod` (run as the Products owner) |
-| `postinstall.sh` | Installs the system packages (run as root) |
-| `bin/prod`, `lib/prod/` | The tool (system python3 3.9 + PyYAML) |
-| `shell/` | `setup_prod.sh`, `setup_prod.csh` |
-| `modulefiles/<NAME>/` | Modulefile template (`template.tcl`, optional `generate`); `_common/` has shared helpers |
-| `build-recipes/<NAME>/` | Per version: `<VERSION>.yml` (depends, source, options; PYTHON also `<VERSION>.requirements.txt`). Per product: `build.sh`, `buildinfo.sh` |
-| `build-recipes/_common/` | Helpers shared by the `build.sh` scripts; `save-recipe.py` (keeps a recipe and its buildinfo next to its version) |
-| `build-recipes/<NAME>/check/` | Test programs that `build.sh` runs against a new installation (HDF5, CUPDATAMODEL, CUPDAQ) |
-| `packages/` | System package lists, by group |
-| `tests/` | Unit tests, sandbox test, real-data test |
-
-## Tests
-
-```bash
-/usr/bin/python3 -I tests/run_unit.py                    # unit tests (seconds)
-/usr/bin/python3 -I tests/sandbox/run.py                 # end to end: fake server and client, real install.sh,
-                                                         # prod, rsync, ssh to localhost, environment-modules
-```
-
-- Both work only in temporary directories. They never touch the real Products, the server or `$HOME`.
-  The sandbox needs password-less `ssh localhost` (skip it with `--no-ssh`). It keeps its directory when it fails
-  (or with `--keep`).
-
-## Development
-
-- People commit, tag and push. Nodes install tags (`vX.Y`) only.
-- A new product version needs no new tag: `build.sh` saves its recipe next to the version
-  (`<NAME>/<VERSION>.recipe.yml`), and `prod release` and `prod sync` use that copy. Tag only when the tool,
-  the modulefile templates or the package lists change.
-- Everything is written in English: code, comments, messages and documentation.
+| `prod: vlist '1.1' is not installed on this node; run 'prodman sync 1.1'` | Ask the node admin to install it |
+| `prod: no releases on this node; ...` | Ask the node admin |
+| `needs PYTHON V..., but another PYTHON is loaded` | `module unload PYTHON`, or load a whole release instead |
+| `prod: environment-modules is not installed` | Ask the node admin |
